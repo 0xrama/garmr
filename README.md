@@ -1,67 +1,142 @@
-# cancunf-exploit
+# Garmr
 
-Fenrir-class secure-boot-bypass PoC work for the **Motorola Moto G54/G64 5G**
-(codename `cancunf`, MediaTek MT6855 / Dimensity 7025).
+Garmr is a fenrir-inspired secure-boot-bypass PoC for Motorola's `cancunf`
+platform: the Moto G54 5G and Moto G64 5G (MediaTek MT6855 / Dimensity 7025).
 
-Personal device, legitimate research. Built against stock firmware
-**`V1TDS35H.83-20-5-5 RETIN` (Android 15)** — patches are build-specific.
+I built this to answer a narrow question: does cancunf's MTK LK container have
+the same EL3 verification-policy weakness used by fenrir? Yes. The current LK
+artifact boots on tested hardware and makes Android report a locked, green boot
+state. It does **not**, by itself, make hardware attestation report a locked
+bootloader.
 
-## What this is
+This is a research tree, not a one-click unlock tool. The phone must already be
+bootloader-unlocked, and every patch is tied to a firmware build.
 
-An offline-constructed PoC that patches the cancunf `lk.img` to:
-- disable the MTK secure-boot verification policy at EL3 (`sec_get_vfy_policy` → return 0),
-- spoof lock state to `LKS_LOCK`,
-- spoof sboot state,
+## Current result
 
-then re-signs modified partitions via cert-bypass (override). The patched image
-parses cleanly and the core patch is byte-verified present in `bl2_ext`.
+Tested against stock firmware `V1TDS35H.83-20-5-12 RETIN` (Android 15):
 
-## What this is NOT (yet)
+- `poc/cancunf-fenrir-full-20-5-12.img` boots with stock system images.
+- Android reports `verifiedbootstate=green`,
+  `vbmeta.device_state=locked`, and `flash.locked=1`.
+- Play Integrity reaches **BASIC**, not DEVICE or STRONG. The Trustonic
+  KeyMint trustlet still has an independent bootloader-state input.
+- The artifact parses cleanly and is cert-bypass signed for the LK container.
 
-- **Not proven to boot.** Runtime MMU faults / over-broad patch matches can bootloop
-  or brick. Needs a sacrificial device.
-- **Not complete.** `force_green_state` and the preflash-validation bypass are open
-  (need Ghidra xref analysis — see `notes/STATUS.md`).
-- **Not a guaranteed Strong-Integrity bypass.** On cancunf the attestation RoT
-  is composed by a vendor-loaded Kinibi KM trustlet outside the LK container —
-  see `notes/ATTESTATION_CHANNEL.md` for the proven boundary, the patch point
-  that could still yield "fenrir-class" STRONG (vendor KM trustlet / tee.img),
-  and the pragmatic Track A (TrickyStore+keybox).
+The name `full` is historical. It contains seven patches; the dangerous
+`sboot` patch is deliberately absent. The output filenames retain `fenrir`
+because Garmr uses the fenrir injector and liblk tooling.
 
-## Layout
+### Patch status
 
+| Patch | Result |
+| --- | --- |
+| `sec_get_vfy_policy` | Hardware-confirmed EL3 chain bypass in `bl2_ext`, `lk`, and `aee` |
+| `spoof_lock_state` | Present, but the seccfg reader it targets is dead code for attestation |
+| `force_green_state` | Hardware-confirmed |
+| `avb_allow_verification_error` | Included and byte-verified |
+| `bypass_security_control` | Included; skips the fastboot lock/security gate |
+| `preflash_validation_bypass` | Included; skips the preflash failure branch |
+| `vbmeta_device_state_locked` | Hardware-confirmed |
+| `spoof_sboot_state` | Removed: stock sboot is already enabled, and the replacement breaks boot |
+
+The exact bytes, offsets, and Ghidra evidence are in [`notes/STATUS.md`](notes/STATUS.md).
+
+## Why Strong Integrity is a separate problem
+
+On cancunf, LK's seccfg lock-state code writes a shadow global, but the only
+reader has no callers. The TEE does not get its attestation state from that LK
+path; the Trustonic KeyMint trustlet composes the RootOfTrust separately.
+That is why spoofing LK properties works for Android's boot-state reporting but
+hardware attestation still says the bootloader is unlocked.
+
+A three-patch KeyMint trustlet module is included as an unvalidated research
+artifact:
+
+```text
+poc/cancunf-km-trustlet-patch-v2.zip
 ```
-firmware/         extracted stock components (lk.img, preloader, tee, gz, vbmeta, …)
-devices/cancunf.py    drop-in fenrir device entry (confirmed patches)
-poc/build_poc.py      reproducible builder -> poc/cancunf-fenrir-poc.img
-poc/cancunf-fenrir-poc.img   the built PoC (core patches only)
-analysis/find_patches.py     reproduces all findings + lists open-patch candidates
-notes/STATUS.md              per-patch status + exact Ghidra tasks for the open ones
-notes/integrity_practical.md the two integrity tracks (honest)
-```
 
-## Reproduce
+It targets the exact trustlet from this firmware and forces the relevant
+locked/green fields. It is intended for a rooted Magisk/KernelSU environment,
+and its bind mount may be rejected if Kinibi verifies the trustlet signature.
+Do not treat it as tested just because the binary patch is present. See
+[`notes/TRUSTLET_PATCH.md`](notes/TRUSTLET_PATCH.md).
+
+For a daily driver, the practical alternative is TrickyStore plus a valid
+keybox. That route needs root and has keybox-rotation/revocation costs; see
+[`notes/integrity_practical.md`](notes/integrity_practical.md).
+
+## Build and verify
+
+The builder uses [liblk](https://github.com/R0rt1z2/liblk) and the
+[fenrir injector](https://github.com/R0rt1z2/fenrir/tree/main/injector):
 
 ```bash
-# deps: liblk (github.com/R0rt1z2/liblk) on PYTHONPATH
-PYTHONPATH=/path/to/liblk:/path/to/fenrir/injector \
-  python3 poc/build_poc.py
-# -> poc/cancunf-fenrir-poc.img
-
-# re-run the analysis any time:
-PYTHONPATH=/path/to/liblk python3 analysis/find_patches.py
+LIBLK_PATH=/path/to/liblk \
+FENRIR_INJECTOR_PATH=/path/to/fenrir/injector \
+python3 poc/build_full_20_5_12.py
 ```
 
-## Flashing prerequisites (if/when you test on hardware)
+The stock input defaults to:
 
-1. Unlock seccfg with `mtkclient` (`python mtk da seccfg unlock`) — the fenrir
-   flaw only triggers in the unlocked state.
-2. Keep a full partition backup + recovery path (EDL/DA) before flashing anything.
-3. Flash only the matching firmware build. Wrong build = brick.
+```text
+firmware/V1TDS35H.83-20-5-12/lk.img
+```
 
-## Credits / references
+Override it with `CANCUNF_STOCK` and the output with `CANCUNF_OUT` if needed.
+The builder checks hit counts, removes every original pattern, reapplies the
+cert-bypass override, and reparses the resulting image.
 
-- fenrir + liblk + lkpatcher — R0rt1z2 (NEE PA1.0)
-- device-porting patterns — Shirayuki39/fenrir (S666LN, LG8n payloads)
-- MTK struct parsing — shomykohai/hacc (+ cyberknight777 BromSecCfg work)
-- cancunf ecosystem — cyberknight777 (kernel/ROM maintainership, mtklogo, unreleased low-level exploit)
+To verify an existing artifact against its stock input:
+
+```bash
+PYTHONPATH=/path/to/liblk \
+python3 poc/verify_poc.py \
+  firmware/V1TDS35H.83-20-5-12/lk.img \
+  poc/cancunf-fenrir-full-20-5-12.img
+```
+
+To rerun the byte-level analysis:
+
+```bash
+LIBLK_PATH=/path/to/liblk \
+CANCUNF_STOCK=firmware/V1TDS35H.83-20-5-12/lk.img \
+python3 analysis/find_patches.py
+```
+
+## Repository layout
+
+```text
+firmware/                 Stock LK and related firmware components
+poc/build_full_20_5_12.py Canonical seven-patch builder
+poc/verify_poc.py         Per-partition patch verification
+poc/*.img                 Built LK artifacts and trial variants
+poc/*trustlet*.zip        Root-module trustlet experiments
+analysis/                 Pattern searches and binary-analysis helpers
+devices/cancunf.py        Initial drop-in fenrir device entry
+notes/STATUS.md           Current patch and hardware-trial status
+notes/ATTESTATION_CHANNEL.md  TEE/KeyMint data-flow investigation
+notes/TRUSTLET_PATCH.md   Trustlet patch point and remaining risks
+```
+
+`devices/cancunf.py` is the original framework entry and still contains the
+old sboot stage. Use `poc/build_full_20_5_12.py` for the current artifact.
+
+## Hardware warnings
+
+- Garmr's fenrir-derived path requires `seccfg` unlocked; it is not an unlock bypass.
+- Back up every partition and keep a working EDL/DA recovery path before
+  touching `lk.img`.
+- Flash only the matching firmware build. A pattern match is not proof that a
+  different build is safe.
+- Use a sacrificial device if you are testing modified boot-chain images. The
+  failed sboot variants produced the Android “Cannot load” screen; removing
+  that patch restored boot.
+
+## Credits
+
+- [R0rt1z2/fenrir](https://github.com/R0rt1z2/fenrir), [liblk](https://github.com/R0rt1z2/liblk)
+- [Shirayuki39/fenrir](https://github.com/Shirayuki39/fenrir) for device-porting references
+- [shomykohai/hacc](https://github.com/shomykohai/hacc) for MTK structure parsing
+- The cancunf kernel/ROM and low-level research community

@@ -1,51 +1,64 @@
-# Play Integrity on unlocked cancunf — the honest options
+# Play Integrity on an unlocked cancunf
 
-Your actual pain is "custom ROM works great, apps fail integrity." There are two
-parallel tracks. Read both before committing time to the bootloader exploit.
+The short version: Garmr fixes the bootloader-facing state, but the seven-patch
+LK image still reports BASIC only. If the immediate goal is a daily driver with
+banking and Play Integrity-dependent apps, the software route is less risky.
 
-## Track A — Software (TrickyStore + keybox)  ← solves your pain NOW
+## Track A: TrickyStore and a keybox
 
-This is what the rooting community actually uses today to pass
-`MEETS_STRONG_INTEGRITY` on unlocked devices. It needs **root, not a bootloader
-exploit.** You already have/need root for a custom-ROM daily driver anyway.
+This does not require the Garmr boot-chain patch. It requires root:
 
-**Stack:**
-- KernelSU or Magisk (root)
-- **TrickyStore** (Magisk/KSU module) — intercepts the KeyMint attestation path and
-  substitutes a genuine-device certificate chain (`keybox.xml`).
-- A valid `keybox.xml` (extracted from a genuinely-locked device — these circulate
-  in the rooting community; Google revokes abused ones, so they rotate).
-- Optional: spoof the security-patch date so `MEETS_STRONG_INTEGRITY`'s
-  "recent patches on all partitions" rule is satisfied.
+- Magisk or KernelSU
+- TrickyStore
+- a working `keybox.xml`
+- optionally, a security-patch-date setup if the current Strong verdict requires it
 
-**Result:** `MEETS_BASIC` + `MEETS_DEVICE` + `MEETS_STRONG` pass. Google's JWT is
-genuine (Play Services generated it from the spoofed inputs).
+TrickyStore operates at the Android KeyMint/attestation boundary and can replace
+the certificate chain and RootOfTrust values supplied to Google. On a working,
+unrevoked keybox this is the route people use to obtain BASIC, DEVICE, and
+STRONG verdicts on unlocked phones.
 
-**Cost:** finding/keeping an unrevoked keybox; periodic rotation when Google blocks one.
+There are real drawbacks:
 
-**Why this is the pragmatic answer:** zero brick risk, no firmware-build-matching,
-works the day you set it up, independent of whether the fenrir PoC ever fully works.
+- leaked keyboxes get revoked;
+- a replacement keybox may be needed later;
+- this is not a permanent firmware fix;
+- the result depends on the module stack and the exact device state.
 
-## Track B — Bootloader exploit (this workspace)  ← research/deeper goal
+Still, it has no LK-flashing or firmware-build-matching risk and is the sensible
+first option for a phone that needs to work this week.
 
-The fenrir PoC in `poc/` aims to make the *genuine* hardware attestation key sign
-green/locked state with no keybox needed. That's a stronger, more durable result
-*if* it works — but as of now:
+## Track B: Garmr and the genuine key
 
-- Core verification-bypass + lock/sboot spoof: built and byte-verified ✅
-- `force_green_state` + preflash bypass: open, need Ghidra ❌
-- Whether it actually passes Strong Integrity: **unproven**, needs a real Play
-  Integrity request on a booted+patched device. Could pass cleanly, could pass
-  DEVICE-but-not-STRONG (the `verifiedBootKey` consistency issue), or could fail.
+The Garmr LK artifact is the research route. It makes the normal-world boot
+chain report:
 
-**Recommendation:** run Track A for your daily-driver integrity today. Keep this
-workspace as the Track B research project. They aren't mutually exclusive — if Track B
-matures, it removes the keybox-rotation dependency Track A carries.
+```text
+verifiedbootstate=green
+vbmeta.device_state=locked
+flash.locked=1
+```
 
-## Quick decision
+The phone boots and reaches BASIC. It does not change the `deviceLocked` value
+that the vendor Trustonic KeyMint trustlet uses for hardware attestation.
 
-| If you want… | Do this |
-|---|---|
-| Banking/apps working this week | Track A (TrickyStore + keybox) |
-| To understand/contribute to the exploit | Track B (this workspace) + learn Ghidra/ARM64 |
-| The "permanent, no keybox" endgame | Track B, but it's unproven and months of work |
+That trustlet has now been located and a three-site patch has been built:
+
+```text
+poc/cancunf-km-trustlet-patch-v2.zip
+```
+
+The package is still an experiment. It may be rejected by Kinibi's MCLF loader,
+and no hardware test has established a DEVICE or STRONG result. The remaining
+checks are documented in [`TRUSTLET_PATCH.md`](TRUSTLET_PATCH.md).
+
+## Which track makes sense?
+
+| Goal | Practical choice |
+| --- | --- |
+| Apps working soon | Track A, with a valid unrevoked keybox |
+| Learn the boot chain and ARM64 patching | Track B, on a spare device |
+| Remove the keybox dependency | Continue the trustlet/TEE work; it is not finished |
+
+The two tracks are independent. Using Track A does not prevent continuing Garmr
+research later.
