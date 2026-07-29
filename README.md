@@ -22,9 +22,11 @@ parses cleanly and the core patch is byte-verified present in `bl2_ext`.
   or brick. Needs a sacrificial device.
 - **Not complete.** `force_green_state` and the preflash-validation bypass are open
   (need Ghidra xref analysis — see `notes/STATUS.md`).
-- **Not a guaranteed Strong-Integrity bypass.** See `notes/integrity_practical.md`
-  for the honest options; the pragmatic daily-driver path is TrickyStore+keybox,
-  not this.
+- **Not a guaranteed Strong-Integrity bypass.** On cancunf the attestation RoT
+  is composed by a vendor-loaded Kinibi KM trustlet outside the LK container —
+  see `notes/ATTESTATION_CHANNEL.md` for the proven boundary, the patch point
+  that could still yield "fenrir-class" STRONG (vendor KM trustlet / tee.img),
+  and the pragmatic Track A (TrickyStore+keybox).
 
 ## Layout
 

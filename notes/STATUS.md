@@ -126,16 +126,23 @@ signed artifact or tested on hardware.
 
 The 7-patch build is the **optimal LK configuration**. It correctly spoofs all
 bootloader-controlled properties. But Play Integrity cannot exceed BASIC via LK
-patching alone, because:
+patching alone. Verified three independent ways (see
+`notes/ATTESTATION_CHANNEL.md`, 2026-07-29):
 
-1. Ghidra decompilation proved the lock-state code in both `lk` and `bl2_ext` is
-   write-only — no function reads the seccfg-derived lock state.
-2. The TEE reads `deviceLocked` from RPMB/eFuse directly, bypassing the LK.
-3. No LK patch can change what the TEE signs in the attestation certificate.
+1. The lock-state code in both `lk` and `bl2_ext` is write-only — the only
+   readers (lock wrappers 0xc2fe4 / 0x1aa2ac) have zero callers, no
+   dispatch-table references exist, and LK's whole SMC surface is power/RTC-only.
+2. `tee.img` (atf @ 0x48200000 + Kinibi) contains **no keymaster/attestation
+   logic at all** — its only state channel is an ATF ROT mailbox used for
+   utag/UFS-RPMB handover, not attestation. The RoT extension is composed by a
+   **dynamic KM trustlet in the vendor image**, above a TEE that self-sources
+   platform state (eFuse/lifecycle/RPMB), bypassing LK entirely.
+3. Therefore no LK patch can change what the TEE signs. The patch point for
+   "fenrir-class" STRONG on cancunf is the **vendor KM trustlet** (plus possibly
+   Kinibi's TA-signature check in `tee.img`) — both load-time-unverified in
+   fenrir mode — or Track A (TrickyStore+keybox) which needs neither.
 
-For DEVICE + STRONG integrity, use **Track A (TrickyStore + keybox)** at the
-Android KeyMint layer. See `notes/integrity_practical.md` and
-`notes/RESEARCH_FINDINGS.md` for the full analysis.
+Next actions and the exact dumps needed are in `notes/ATTESTATION_CHANNEL.md` §4–§5.
 
 ## Not in scope of this LK PoC
 
