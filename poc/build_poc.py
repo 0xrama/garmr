@@ -27,8 +27,12 @@ from stage import PatchStage                                       # noqa: E402
 from patch_utils import MatchMode                                  # noqa: E402
 from injector import BootloaderInjector                            # noqa: E402
 
-STOCK = os.path.join(ROOT, 'firmware', 'lk.img')
-OUT = os.path.join(HERE, 'cancunf-fenrir-poc.img')
+# Stock input and PoC output are env-configurable so the same builder targets
+# any firmware build. Defaults preserve the original 20-5-5 reference target.
+STOCK = os.environ.get('CANCUNF_STOCK',
+                       os.path.join(ROOT, 'firmware', 'lk.img'))
+OUT = os.environ.get('CANCUNF_OUT',
+                     os.path.join(HERE, 'cancunf-fenrir-poc.img'))
 
 # --- patches (mirror devices/cancunf.py) ---
 STAGES = {

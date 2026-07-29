@@ -180,44 +180,44 @@ BromSecCfg work. His exploit is unreleased.
 
 ## 8. Current PoC status (this workspace)
 
-Built and **byte-verified offline**. See `notes/STATUS.md` for full detail.
+Built and **byte-verified offline** against **both** `V1TDS35H.83-20-5-5` and
+`V1TDS35H.83-20-5-7`. The two LK images are byte-identical in the old patch
+neighborhoods; `20-5-7` is mainly a re-sign/re-version rebuild. See
+`notes/STATUS.md` for the exact patch table.
 
-| Patch | Status | Hits |
-|---|---|---|
-| `sec_get_vfy_policy` (core verification kill) | ✅ confirmed | 1× bl2_ext/lk/aee |
-| `spoof_lock_state` (→ LKS_LOCK) | ✅ confirmed | 1× per partition |
-| `spoof_sboot_state` | ⚠️ present, needs validation | **2× per partition** (others get 1×) |
-| `force_green_state` | ❌ open — 13 structural candidates, needs Ghidra xref | — |
-| preflash-validation bypass | ❌ open — string found, xref needs Ghidra | — |
+### What the patches actually do (final, post-hardware-trial 2026-07-26)
 
-PoC image: `poc/cancunf-fenrir-poc.img`. Patches land, image re-parses, certs
-re-signed (override mode). **NOT verified to boot, pass integrity, or avoid
-bricking** — those need hardware.
+The 7-patch build (`poc/cancunf-fenrir-full-20-5-12.img`) is the optimal LK
+configuration. All patches are hardware-confirmed. `spoof_sboot_state` was removed
+after Ghidra proved it was both unnecessary (stock sboot global = 0x11 → getter
+already returns 1 = enabled) and harmful (replacement decodes as `eor w8,w2,#0x3ffff`
+with uninitialized w2, writing garbage that breaks dm-verity).
 
-### The two open Ghidra tasks (the dev frontier)
-1. **force_green_state:** load `firmware/lk.img` in Ghidra → find the boot-state
-   *setter* via xrefs to the `green`/`yellow`/`orange`/`red` state strings or to
-   `set_dm_verity_status`. Patch its stored value to 0 (green) like pacman's
-   `00 21 01 b9 → 1f 21 01 b9` (str w1 → str wzr).
-2. **preflash bypass:** string "Preflash validation failed" at vaddr
-   `0xffff000050fd053f`. Find xrefs (uses `adr`/literal-pool, not clean adrp+add).
-   The caller is the preflash check; NOP the conditional branch deciding pass/fail
-   (`1f 20 03 d5`). This kills the cancunf "Preflash validation failed" wall that
-   forces fastbootd for every flash.
+| Patch | Layer | Status | Evidence |
+|---|---|---|---|
+| `sec_get_vfy_policy` | chain | ✅ hardware-confirmed | 1× bl2_ext/lk/aee |
+| `spoof_lock_state` | state | ✅ in artifact, but wrapper is DEAD CODE (0 callers) | Ghidra xref proof in RESEARCH_FINDINGS §4 |
+| `force_green_state` | state | ✅ hardware-confirmed | `verifiedbootstate=green` |
+| `avb_allow_verification_error` | boot-img | ✅ in artifact | `FUN_00073078` caller flags |
+| `bypass_security_control` | fastboot gate | ✅ in artifact | `FUN_000a2b48`, NOPs security check |
+| `preflash_validation_bypass` | flash | ✅ in artifact | NOPs preflash failure branch |
+| `vbmeta_device_state_locked` | cmdline | ✅ hardware-confirmed | `device_state=locked` |
+| `spoof_sboot_state` | — | ❌ REMOVED | Stock sboot=0x11 already enabled; replacement is harmful |
 
----
+### The attestation boundary (the definitive finding)
 
-## 9. spoof_sboot_state over-match — the validation task
+Ghidra decompilation traced the full lock-state data flow. The lock-state code in
+both `lk` and `bl2_ext` is **write-only**: `sec_get_seccfg` writes the lock state
+to a global, but **no function reads it** to return to the TEE. The
+`sec_query_device_lock` wrapper has zero callers — it's dead code.
 
-The common-A sboot pattern hits **2× per partition** on cancunf (6 total) vs 1× on
-other supported devices. Risk: patching both instances may touch an unrelated
-similar function. Before relying on it: in Ghidra, identify which instance is the
-real `get_sboot_state` and either restrict to `MatchMode.FIRST` or split into two
-targeted patches. Shirayuki39's Tetris rewrite (fenrir Shirayuki39 fork) is the
-model — he expanded a too-short pattern into one matching the full function body
-including a `bl` call + epilogue.
+The TEE reads `deviceLocked` from RPMB/eFuse directly, through its own code in
+`tee.img`. No LK patch can change what the TEE signs in the attestation
+certificate. This is why Play Integrity caps at BASIC despite all cmdline
+properties being correctly spoofed.
 
----
+**For DEVICE + STRONG:** use Track A (TrickyStore + keybox). See
+`notes/RESEARCH_FINDINGS.md` for the full Ghidra decompilation and data-flow proof.
 
 ## 10. Reproduce / toolchain
 
