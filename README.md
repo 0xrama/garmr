@@ -108,11 +108,12 @@ python3 analysis/find_patches.py
 ## Repository layout
 
 ```text
-firmware/                 Stock LK and related firmware components
+firmware/                 Stock LK, TEE, and related firmware components
 poc/build_full_20_5_12.py Canonical seven-patch builder
 poc/verify_poc.py         Per-partition patch verification
-poc/*.img                 Built LK artifacts and trial variants
-poc/*trustlet*.zip        Root-module trustlet experiments
+poc/cancunf-fenrir-full-20-5-12.img Latest built LK artifact
+poc/cancunf-km-trustlet-patch-v2.zip Root-module trustlet patch package
+poc/trustlet_patch/       Trustlet binaries and Magisk module scripts
 analysis/                 Pattern searches and binary-analysis helpers
 devices/cancunf.py        Initial drop-in fenrir device entry
 notes/STATUS.md           Current patch and hardware-trial status
