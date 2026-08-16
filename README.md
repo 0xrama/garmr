@@ -78,6 +78,18 @@ FENRIR_INJECTOR_PATH=/path/to/fenrir/injector \
 python3 poc/build_full_20_5_12.py
 ```
 
+A fenrir-free, liblk-free build path is also available. It applies the same
+seven patches and signs with the native CERT2 hash-override cert bypass, and
+produces a byte-identical image to the fenrir path:
+
+```bash
+python3 poc/build_native_20_5_12.py
+```
+
+The cert bypass lives in [`poc/mtk_cert.py`](poc/mtk_cert.py) (sign + verify,
+stdlib only). See [`notes/CERT_BYPASS.md`](notes/CERT_BYPASS.md) for the
+mechanism and the byte-for-byte equivalence to fenrir's `CertBypass.OVERRIDE`.
+
 The stock input defaults to:
 
 ```text
@@ -110,6 +122,8 @@ python3 analysis/find_patches.py
 ```text
 firmware/                 Stock LK, TEE, and related firmware components
 poc/build_full_20_5_12.py Canonical seven-patch builder
+poc/build_native_20_5_12.py Fenrir-free seven-patch builder (native cert bypass)
+poc/mtk_cert.py          MTK CERT2 hash-override cert bypass + verifier
 poc/verify_poc.py         Per-partition patch verification
 poc/cancunf-fenrir-full-20-5-12.img Latest built LK artifact
 poc/cancunf-km-trustlet-patch-v2.zip Root-module trustlet patch package
@@ -117,6 +131,10 @@ poc/trustlet_patch/       Trustlet binaries and Magisk module scripts
 analysis/                 Pattern searches and binary-analysis helpers
 devices/cancunf.py        Initial drop-in fenrir device entry
 notes/STATUS.md           Current patch and hardware-trial status
+notes/CERT_BYPASS.md      CERT2 cert-bypass mechanism and equivalence to fenrir
+notes/KINIBI_MCLF_KEY.md  Kinibi trustlet verification key location (flash vs efuse)
+notes/RESEARCH_COMPLETE.md  Full attack-surface map and test plan
+notes/TESTING_GUIDE.md      Hardware test procedure (review before flashing)
 notes/ATTESTATION_CHANNEL.md  TEE/KeyMint data-flow investigation
 notes/TRUSTLET_PATCH.md   Trustlet patch point and remaining risks
 ```
