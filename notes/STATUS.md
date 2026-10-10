@@ -165,3 +165,95 @@ Kinibi trustlet signature enforcement is still an open question. See
   not a result.
 - Portability to another firmware build. Recheck every pattern before using a
   different image.
+
+## 20-5-14 survey (October 2026)
+
+`V1TDS35H.83-20-5-14 RETIN` (full extracted flash bundle, now under
+`firmware/V1TDS35H.83-20-5-14/`) was checked against the seven-patch set with
+`analysis/check_fw.py`, then the three missing sites were re-pinned with
+`analysis/diff_sites.py`, `analysis/repin_20_5_14.py`, and
+`analysis/confirm_repin.py` (capstone disassembly evidence).
+
+**Motorola did not harden any of the seven sites.** The LK sub-image was
+recompiled (it grew 0x1000 bytes and ~60% of bytes differ), which broke three
+patterns purely through PC-relative immediates:
+
+| Patch | What changed in 20-5-14 | New lk offset |
+| --- | --- | --- |
+| `sec_get_vfy_policy` | nothing (relocated) | `0xb660c` (was `0xb6424`) |
+| `spoof_lock_state` | nothing (relocated) | `0xc336c` (was `0xc2de4`) |
+| `force_green_state` | `adrp x8` page immediate `d0 -> f0`; the `str w0,[x8,#0x268]; ret` is untouched | `0x736ec` (unchanged) |
+| `avb_allow_verification_error` | nothing at all | `0x73098` (unchanged) |
+| `bypass_security_control` | callee moved `0xa2948 -> 0xa2b30`, so the `bl` immediate changed; the `tbz w0,#0` gate is byte-identical | `0x4d800` (unchanged) |
+| `preflash_validation_bypass` | nothing at all | `0x11aec` (unchanged) |
+| `vbmeta_device_state_locked` | `adrp x1` data page `0x107000 -> 0x108000`; the `csel x2,x10,x9` still selects between `locked`/`unlocked` at the same site | `0x7c1ec` (unchanged) |
+
+The sboot-global anchor `lk+0x12ee2c = 0x11` is stale in 20-5-14 (the data
+section moved); the getter neighborhood still occurs twice. Informational
+only, since `spoof_sboot_state` remains deliberately omitted.
+
+The CERT2 hash-override preconditions fully hold: all four signed sub-images
+(`lk`, `bl2_ext`, `aee`, `lk_main_dtb`) pass `poc/mtk_cert.py` verification,
+so the cert bypass re-applies unchanged.
+
+The rebuilt artifact is:
+
+```text
+poc/cancunf-native-full-20-5-14.img
+```
+
+built by `poc/build_native_20_5_14.py` (same seven patches, three re-pinned
+patterns, native cert bypass, self-verifying). It parses, patches, and signs
+cleanly, but — like the trustlet package — has not been hardware-validated
+yet. Treat `notes/TESTING_GUIDE.md` as mandatory reading before flashing it.
+
+### Trustlet in 20-5-14
+
+The 20-5-14 vendor image moved to **EROFS with LZ4 compact indexes and a
+64 KB cross-cluster window** (`h_advise = COMPACTED_2B`,
+`feature_incompat = LZ4_0PADDING`), so the raw needle scans that worked for
+the 20-5-12 tree find nothing. The trustlet was carved with
+`analysis/extract_trustlet_14.py` + `analysis/erofs_compact.py` (a faithful
+port of the kernel `zmap.c` compact-index decoder plus a windowed LZ4 block
+decompressor; the old `analysis/erofs_reader.py` cannot read this layout).
+
+The result (`poc/trustlet_patch/stock_trustlet_20_5_14.tlbin`) is 263,555
+bytes — the same size as 20-5-12 — and 95% byte-identical. The differences
+are two rebuilt functions (`0x1a848` and `0x33417` regions), a build-time
+string (`5:24:46` -> `6:14:11` at `0x3ae09`), and the re-signed MCLF tail.
+All three v2 patch sites are byte-identical:
+
+| Site | Offset | Status |
+| --- | --- | --- |
+| `is_locked()` | `0x19ec0` | unchanged |
+| bootloader-state path | `0x1cbbc` | unchanged |
+| device-locked path | `0x1cd5c` | unchanged |
+
+A 20-5-14 patched binary was generated the same way as v2
+(`poc/trustlet_patch/0706000000000000000000000000004d_20_5_14.tlbin`,
+sha256 `7626f446f501826bce37545a38e09b55d77f20c2d5a265b1b3b2d05ba20c62b7`).
+The Kinibi signature question from `TRUSTLET_PATCH.md` is still open, and
+nothing here has been hardware-validated.
+
+### TEE side in 20-5-14
+
+The 20-5-14 `tee.img` passes the full CERT1/CERT2 verification
+(`analysis/check_tee_14.py`), and its Kinibi core is 99% byte-identical to
+20-5-12 — both MCLF verify gates are byte-identical at the same offsets. The
+two-gate bypass is built for both builds:
+
+```text
+bypass/tee_bypassed_20_5_12.img
+bypass/tee_bypassed_20_5_14.img
+```
+
+See `bypass/README.md` for the loader-flow evidence.
+
+Upstream context (checked October 2026): fenrir was archived by its author on
+2026-09-20; its final releases (Nothing Phone 2a/2a+, NothingOS 4) document an
+OEM that *did* patch the weakness at the preloader stage. The ARMv8 successor
+is `sprig` (an EL3 `bl2_ext` replacement payload that disables SBC/SLA/DAA in
+the Preloader for unsigned-DA flashing, not boot-state spoofing), and
+`lkpatcher` is the maintained generic fenrir-style patcher. `kaeru`'s
+`fastboot oem bldr_spoof` route to Strong Integrity is ARMv7-only. No public
+cancunf-specific PoC newer than this repo's method exists.

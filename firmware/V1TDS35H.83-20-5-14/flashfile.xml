@@ -1,0 +1,68 @@
+<?xml version="1.0" ?>
+<flashing>
+    <header>
+        <phone_model model="cancunf_g_sys"/>
+        <software_version version="cancunf_g_sys-user 15 V1TDS35H.83-20-5-14 24971a-330658 release-keys MV-165"/>
+        <sparsing enabled="True" max-sparse-size="268435456"/>
+        <subsidy_lock_config MD5="d41d8cd98f00b204e9800998ecf8427e" name="slcf_mediatek_default_v1.0.atc"/>
+        <regulatory_config SHA1="da39a3ee5e6b4b0d3255bfef95601890afd80709" name="regulatory_info_default.png"/>
+        <cid_template_config SHA1="cfc1136c36955ba5ffe514efdf0037e95e47bef3" name="cid_template.dat"/>
+        <cid_value value="0x0032"/>
+        <iqtuning_rescue enabled="false"/>
+        <apex_rescue enabled="false"/>
+    </header>
+    <steps>
+        <step MD5="41b8da32b24002d7c862f9b1db8a0f00" filename="PGPT" operation="flash" partition="gpt"/>
+        <step operation="getvar" var="max-sparse-size"/>
+        <step operation="oem" var="fb_mode_set"/>
+        <step MD5="00e710e90bf5180a9e1e9c187958c23f" filename="preloader.img" operation="flash" partition="preloader"/>
+        <step MD5="7567412bed6f5b7e2fe60546af52a605" filename="lk.img" operation="flash" partition="lk_a"/>
+        <step MD5="eea83533496494cd9226e0a60b659365" filename="tee.img" operation="flash" partition="tee_a"/>
+        <step MD5="ad22f0ee079370188934d8b2a88193b4" filename="mcupm.img" operation="flash" partition="mcupm_a"/>
+        <step MD5="6932a543201d5c20b0eee3bc3f440b01" filename="pi_img.img" operation="flash" partition="pi_img_a"/>
+        <step MD5="d6fc373336306c9c5082b93546bd84c9" filename="sspm.img" operation="flash" partition="sspm_a"/>
+        <step MD5="2e51cf8da75d23aa4b00cb83e4afc9bf" filename="dtbo.img" operation="flash" partition="dtbo_a"/>
+        <step MD5="03bfa4c8a742a904fd5f6fa22b39c906" filename="logo.img" operation="flash" partition="logo_a"/>
+        <step operation="erase" partition="nvdata"/>
+        <step MD5="02575cede0f42920e5469844201d2094" filename="spmfw.img" operation="flash" partition="spmfw_a"/>
+        <step MD5="04814ee2df73fcac8a9f9ece3417bf4b" filename="scp.img" operation="flash" partition="scp_a"/>
+        <step MD5="03c565d9e69fb99d28719e45f1d63f22" filename="vbmeta.img" operation="flash" partition="vbmeta_a"/>
+        <step MD5="116aa6923544b9bec72706eb5ed06b1b" filename="vbmeta_system.img" operation="flash" partition="vbmeta_system_a"/>
+        <step MD5="0c754f085f000b6d493c703043f02380" filename="md1img.img" operation="flash" partition="md1img_a"/>
+        <step MD5="456b0a026ace9ed39a7c42fbf30d8887" filename="dpm.img" operation="flash" partition="dpm_a"/>
+        <step MD5="226abca6eaf55ee741f843669d733ce9" filename="gz.img" operation="flash" partition="gz_a"/>
+        <step MD5="c0526abf98ce86711dc9f062cd31ac0c" filename="vcp.img" operation="flash" partition="vcp_a"/>
+        <step MD5="fe20986e0041cc6ae4dd936977649a8e" filename="gpueb.img" operation="flash" partition="gpueb_a"/>
+        <step MD5="55d308d8840ffc21229ee3230a54bdd8" filename="efuse.img" operation="flash" partition="efuseBackup"/>
+        <step MD5="e83c54b9019bb28280361e16bc05c74b" filename="boot.img" operation="flash" partition="boot_a"/>
+        <step MD5="028bf53ebbadcbf8d32ab945e0155612" filename="vendor_boot.img" operation="flash" partition="vendor_boot_a"/>
+        <step MD5="ef81ef8db9870b57d586ba75e7d53b84" filename="super.img_sparsechunk.0" operation="flash" partition="super"/>
+        <step MD5="88c2020c706ccc439681e97a64ddd95f" filename="super.img_sparsechunk.1" operation="flash" partition="super"/>
+        <step MD5="83dbaa69deed0047d35728f153e6f30f" filename="super.img_sparsechunk.2" operation="flash" partition="super"/>
+        <step MD5="d456bb8d1708a660d65089a8278d6f45" filename="super.img_sparsechunk.3" operation="flash" partition="super"/>
+        <step MD5="93c0acaa19a9885da183b3b8513af866" filename="super.img_sparsechunk.4" operation="flash" partition="super"/>
+        <step MD5="b71fc9d63c2dbf0ab99fde77853e18aa" filename="super.img_sparsechunk.5" operation="flash" partition="super"/>
+        <step MD5="63a4efd3f5d46768d02c7459925567db" filename="super.img_sparsechunk.6" operation="flash" partition="super"/>
+        <step MD5="6474970a4b0a86f12d3ae194ea22dcfb" filename="super.img_sparsechunk.7" operation="flash" partition="super"/>
+        <step MD5="9a11e1d03ed9a8d9a9bc3fd4661da72e" filename="super.img_sparsechunk.8" operation="flash" partition="super"/>
+        <step MD5="ba13e04ca661ba51e2bbe6ed8738818b" filename="super.img_sparsechunk.9" operation="flash" partition="super"/>
+        <step MD5="3a065afd777dc7da1e2244499f99fc99" filename="super.img_sparsechunk.10" operation="flash" partition="super"/>
+        <step MD5="0629a1bcc4c9719d596509defba757fc" filename="super.img_sparsechunk.11" operation="flash" partition="super"/>
+        <step MD5="e09cfaab5856d50cd44ba5b3ef925434" filename="super.img_sparsechunk.12" operation="flash" partition="super"/>
+        <step MD5="37a08217a0c02b7b1651d28aa1173bdb" filename="super.img_sparsechunk.13" operation="flash" partition="super"/>
+        <step MD5="689ee53f3cff495e15690f53b74fd50a" filename="super.img_sparsechunk.14" operation="flash" partition="super"/>
+        <step MD5="776c655aaa7d8d36a8c615b8a131e810" filename="super.img_sparsechunk.15" operation="flash" partition="super"/>
+        <step MD5="b18e5343868a4537bc169bd73b8383fb" filename="super.img_sparsechunk.16" operation="flash" partition="super"/>
+        <step MD5="27339228d18715c82bb11b260d65be7c" filename="super.img_sparsechunk.17" operation="flash" partition="super"/>
+        <step MD5="7f106e4db9e2e9919a2cce8112c002cf" filename="super.img_sparsechunk.18" operation="flash" partition="super"/>
+        <step MD5="6094364337cfc0bb5a4fc2cd3b65c14d" filename="super.img_sparsechunk.19" operation="flash" partition="super"/>
+        <step MD5="bcc6b0385303c21bb0364965e37c7a7d" filename="super.img_sparsechunk.20" operation="flash" partition="super"/>
+        <step MD5="7ebf75df48b17e67ccdb465361c432bc" filename="super.img_sparsechunk.21" operation="flash" partition="super"/>
+        <step operation="erase" partition="userdata"/>
+        <step operation="erase" partition="metadata"/>
+        <step operation="erase" partition="debug_token"/>
+        <step operation="oem" var="fb_mode_clear"/>
+        <step operation="oem" var="config unset console"/>
+        <step operation="oem" var="config unset cmdl"/>
+    </steps>
+</flashing>

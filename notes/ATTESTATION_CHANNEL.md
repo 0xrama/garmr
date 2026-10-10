@@ -78,6 +78,12 @@ analysis/dump_fns.py
 
 ## 3. The trustlet patch point
 
+> **Updated (offline re-analysis, Oct 2026):** the source of `is_locked()`'s
+> global is now pinned. It is **not** the TCI and **not** the ATF ROT
+> mailbox — see the "Where the lock byte really comes from" section below.
+> The practical consequence: no LK-side spoof can reach it, and the trustlet
+> patch is the correct (and necessary) layer.
+
 The vendor trustlet is a 263 KB ARM64 MCLF binary. At offset `0x19ec0` it has:
 
 ```asm
@@ -162,3 +168,40 @@ On a rooted phone, the trustlet location and loader messages can be checked with
 su -c 'ls -la /vendor/app/mcRegistry /vendor/tee /vendor/firmware 2>/dev/null'
 logcat -d | grep -i -E 'trustonic|keymaster|kmta|mobicore'
 ```
+
+## 6. Where the lock byte really comes from (Oct 2026)
+
+`analysis/trace_rot_input.py` / `trace_rot_input2.py` sweep the whole
+trustlet for accesses to the `0x73000` page. `[0x73000+8]` — the
+`is_locked()` global — has exactly two writers:
+
+1. **Reset** (`0x19c9c`): `str wzr` — a clear-state path that also closes the
+   cached session at `[0x72000+0xff8]`.
+2. **Load** (`0x19fa4`, inside the function at `0x19ed8`):
+   opens a storage session (`bl 0x13200`), **reads a 4-byte value through
+   the storage API (`bl 0x1d980`)** into `[sp+0x40]`, caches the session,
+   then stores `(u64)value / 9` (magic `0xE38E38E38E38E38F`, `umulh`+`lsr #5`)
+   into `[0x73000+8]`.
+
+So the bootloader-lock input to attestation is a **persisted trustlet
+storage value** (Kinibi secure storage, session-cached), decoded from an
+encoded integer. Consequences:
+
+- The **ATF ROT-mailbox SMCs are not the source** — an LK-side spoof of the
+  `MTK_SIP_LK_ROOT_OF_TRUST` handoff cannot change attestation. That
+  shortcut is disproved; the three-site trustlet patch remains the layer to
+  patch.
+- The second device-locked selector at `0x1cd5c` reads `ldrb w0, [sp,#0x2c8]`
+  (HAL-supplied TCI byte), consistent with the original findings: one
+  secure-side gate (`is_locked`), one REE-fed gate.
+- Callers of the loader function: `0x1a0d0`, `0x1a19c`, `0x1a77c` (init /
+  provisioning paths).
+
+For the 20-5-14 trustlet the same layout holds: the writer, the reset, the
+selection tree at `0x1cc00..0x1cd9c`, and the string table are byte-identical;
+the two rebuilt regions (`0x1a848..0x1bad5`, `0x33417..0x34c0e`) sit in bulk
+code away from every pinned site (`analysis/diff_trustlet_fns2.py`; the old
+region-A profile — 8 string-emitter calls, RoT-struct references, 2 storage
+opens — marks it as certificate-assembly code, and value *selection* happens
+in the unchanged region).
+

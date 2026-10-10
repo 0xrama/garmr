@@ -71,6 +71,21 @@ hash of any region, not DER).
 
 ## Final hop: who initializes [0x54000+0x8c]
 
+> **Correction (offline re-analysis, Oct 2026):** the "23 references" to the
+> Kinibi BSS page in the `atf` partition were **unaligned byte-scan noise** —
+> `adrp` targets are encoded relative to PC and never appear as raw literals.
+> A full capstone sweep with register tracking (`analysis/find_handler3.py`)
+> found 34 accesses to the dispatch page inside Kinibi, **all reads**, and
+> zero code references in ATF. The pointer is written indirectly at runtime
+> (driver registration), so its static provenance stays unresolved.
+>
+> **This hop is now moot for the bypass.** `analysis/annotate_loader.py`
+> mapped the whole MCLF loader with wrapper command ids: cmd `0xad` is the
+> verify verdict, gated at exactly two `cbz` sites (`0x5ebf0`, `0x5eca4`),
+> and `bypass/patch_verify.py` now patches both. See `bypass/README.md`.
+
+Original investigation (superseded, kept for the record):
+
 Traced (Kinibi side):
 
 - `[0x54000+0x8c]` (runtime `0x0854008c`) is BSS in kinibi_core.bin (all zero

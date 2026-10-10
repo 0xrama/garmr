@@ -99,3 +99,21 @@ The module has not been validated on hardware. In particular:
 The next useful test is a rooted boot with a recovery path, followed by a full
 Key Attestation dump and the Trustonic loader log. A successful bind mount alone
 is not enough; the certificate fields are the result that matters.
+
+## 20-5-14 status
+
+The `V1TDS35H.83-20-5-14` trustlet was carved from the new EROFS vendor image
+(see `notes/STATUS.md` for the extraction path). It is the same size and 95%
+byte-identical to the 20-5-12 binary; only two functions, a build-time string,
+and the signature block changed. All three patch offsets above are unchanged,
+so the v2 sites carry over directly:
+
+```text
+poc/trustlet_patch/stock_trustlet_20_5_14.tlbin                            carved stock
+poc/trustlet_patch/0706000000000000000000000004d_20_5_14.tlbin             3-site patched
+```
+
+The v2 Magisk/KernelSU package itself is still built around the 20-5-12
+binary; for a 20-5-14 test, bind-mount the `_20_5_14` binary instead of the
+packaged one (same target path, `/vendor/app/mcRegistry/0706...4d.tlbin`).
+All caveats above still apply unchanged.

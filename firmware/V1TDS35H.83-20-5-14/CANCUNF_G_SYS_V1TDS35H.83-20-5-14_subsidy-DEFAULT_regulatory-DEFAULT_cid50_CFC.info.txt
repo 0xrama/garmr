@@ -1,0 +1,11 @@
+BUILD INFORMATION
+  SW Version: cancunf_g_sys-user 15 V1TDS35H.83-20-5-14 24971a-330658 release-keys MV-165
+  MBM Version: MBM-3.1-cancunf_g_vext-6d93e-V1TDS35H.83-20-5-14-24971a
+  Modem Version: MT6855D_TC2.PR7.SP.V72.2.1.P7.06.158.06R
+  SW Display Build ID: V1TDS35H.83-20-5-14
+  Build Fingerprint: motorola/cancunf_g_sys/cancunf:15/V1TDS35H.83-20-5-14/24971a-330658:user/release-keys
+
+OTHER INFORMATION
+  Subsidy Lock Config: slcf_mediatek_default_v1.0.atc
+  Regulatory Info (eLabel): regulatory_info_default.png
+  eLabel SHA1: da39a3ee5e6b4b0d3255bfef95601890afd80709

@@ -23,6 +23,11 @@ Tested against stock firmware `V1TDS35H.83-20-5-12 RETIN` (Android 15):
   KeyMint trustlet still has an independent bootloader-state input.
 - The artifact parses cleanly and is cert-bypass signed for the LK container.
 
+The newer `V1TDS35H.83-20-5-14` build was surveyed in October 2026: no patch
+site was hardened, three patterns were re-pinned, and
+`poc/cancunf-native-full-20-5-14.img` builds and verifies cleanly but has
+not been flashed. Details in [`notes/STATUS.md`](notes/STATUS.md).
+
 The name `full` is historical. It contains seven patches; the dangerous
 `sboot` patch is deliberately absent. The output filenames retain `fenrir`
 because Garmr uses the fenrir injector and liblk tooling.
@@ -86,6 +91,14 @@ produces a byte-identical image to the fenrir path:
 python3 poc/build_native_20_5_12.py
 ```
 
+The same seven-patch set is available for the newer `V1TDS35H.83-20-5-14`
+build (three patterns re-pinned after a routine Motorola recompile; no site
+was actually hardened — see [`notes/STATUS.md`](notes/STATUS.md)):
+
+```bash
+python3 poc/build_native_20_5_14.py
+```
+
 The cert bypass lives in [`poc/mtk_cert.py`](poc/mtk_cert.py) (sign + verify,
 stdlib only). See [`notes/CERT_BYPASS.md`](notes/CERT_BYPASS.md) for the
 mechanism and the byte-for-byte equivalence to fenrir's `CertBypass.OVERRIDE`.
@@ -123,12 +136,18 @@ python3 analysis/find_patches.py
 firmware/                 Stock LK, TEE, and related firmware components
 poc/build_full_20_5_12.py Canonical seven-patch builder
 poc/build_native_20_5_12.py Fenrir-free seven-patch builder (native cert bypass)
+poc/build_native_20_5_14.py Seven-patch builder for the 20-5-14 build (re-pinned)
 poc/mtk_cert.py          MTK CERT2 hash-override cert bypass + verifier
 poc/verify_poc.py         Per-partition patch verification
-poc/cancunf-fenrir-full-20-5-12.img Latest built LK artifact
+poc/cancunf-fenrir-full-20-5-12.img Latest hardware-validated LK artifact
+poc/cancunf-native-full-20-5-14.img Newer-build artifact (not hardware-validated)
 poc/cancunf-km-trustlet-patch-v2.zip Root-module trustlet patch package
 poc/trustlet_patch/       Trustlet binaries and Magisk module scripts
 analysis/                 Pattern searches and binary-analysis helpers
+analysis/check_fw.py      Stock-firmware survey for the whole patch set
+analysis/diff_sites.py   Old-vs-new LK byte diff and relaxed pattern hunts
+analysis/repin_20_5_14.py / confirm_repin.py  Capstone re-pinning evidence
+analysis/find_trustlet.py  Sparse-aware super scan for the KeyMint trustlet
 devices/cancunf.py        Initial drop-in fenrir device entry
 notes/STATUS.md           Current patch and hardware-trial status
 notes/CERT_BYPASS.md      CERT2 cert-bypass mechanism and equivalence to fenrir
