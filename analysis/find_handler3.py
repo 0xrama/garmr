@@ -9,8 +9,10 @@ Linear capstone sweep with light register tracking:
   - ldr/str [xN, #imm]-> report if the effective address lands in the target page
 
 Runs over the Kinibi core (own VA space, base 0x08000000) looking for the
-page 0x54000, and over the ATF partition (base 0x48200000) looking for
-0x4854xxxx / 0x0854xxxx, to decide which side initializes the dispatch table.
+page 0x54000, and over ATF using two candidate code bases while watching
+0x08540000. This heuristic is not control-flow/data-flow analysis: indirect
+writes and untracked instructions can be missed. It cannot establish which
+side initializes the dispatcher or prove that no writer exists.
 
 Usage:
   uv run --with capstone --no-project python analysis/find_handler3.py
@@ -117,7 +119,7 @@ def main() -> int:
             mark = "  <==" if j == idx else ""
             print(f"    0x{insns[j].address:08x}  {insns[j].bytes.hex(' '):<14} {insns[j].mnemonic:<8} {insns[j].op_str}{mark}")
 
-    # same sweep over ATF for the kinibi page (both VA aliases)
+    # Same watched Kinibi page, with two candidate ATF code bases.
     data = open(T12, "rb").read()
     parts = mtk_cert.parse_parts(data)
     atf = next(p for p in parts if p.name == "atf")

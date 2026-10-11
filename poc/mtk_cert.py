@@ -41,6 +41,10 @@ Usage
     python3 poc/mtk_cert.py sign firmware/.../lk.img -o out.img
     python3 poc/mtk_cert.py sign in.img -o out.img --partitions lk,bl2_ext,aee
     python3 poc/mtk_cert.py verify out.img --all
+
+Verification requires a complete cancunf LK or TEE signed inventory. It checks
+internal consistency using embedded keys, not a device-provisioned trust anchor,
+boot safety, trustlet acceptance, or Play Integrity.
 """
 
 from __future__ import annotations
@@ -134,32 +138,46 @@ class PartHdr:
 def parse_parts(data: bytes) -> list[PartHdr]:
     parts: list[PartHdr] = []
     off = 0
-    while off + PART_HDR_SIZE <= len(data):
+    while off < len(data):
+        if off + PART_HDR_SIZE > len(data):
+            raise ValueError("truncated partition header")
         hdr = PartHdr(off, data[off : off + PART_HDR_SIZE])
-        if hdr.magic != PART_MAGIC:
-            break
+        if hdr.magic != PART_MAGIC or hdr.ext_magic != EXT_MAGIC:
+            raise ValueError(f"invalid partition magic at 0x{off:x}")
+        if hdr.hdr_sz != PART_HDR_SIZE or hdr.dsize_extend:
+            raise ValueError("unsupported partition header or extended size")
+        if not hdr.dsize or hdr.align_sz & (hdr.align_sz - 1):
+            raise ValueError("invalid partition size or alignment")
+        if hdr.img_list_end not in (0, 1):
+            raise ValueError("invalid partition end marker")
         if hdr.end > len(data):
             raise ValueError(f"partition {hdr.name!r} data exceeds file size")
         parts.append(hdr)
         if hdr.img_list_end:
-            break
+            if hdr.end != len(data):
+                raise ValueError("trailing bytes after partition end marker")
+            return parts
         off = hdr.end
-    if not parts:
-        raise ValueError("no part_hdr_t entries found")
-    return parts
+    raise ValueError("missing partition end marker")
 
 
 def signed_triples(parts: list[PartHdr]) -> list[tuple[PartHdr, PartHdr, PartHdr]]:
-    """Return (image, cert1, cert2) triples in container order."""
+    """Require the complete, ordered cancunf LK or TEE signed inventory."""
+    inventories = {
+        "lk": ("lk", "bl2_ext", "aee", "lk_main_dtb"),
+        "atf": ("atf", "tee"),
+    }
+    expected = inventories.get(parts[0].name) if parts else None
+    if expected is None or len(parts) != 3 * len(expected):
+        raise ValueError("incomplete or unsupported signed image inventory")
     out: list[tuple[PartHdr, PartHdr, PartHdr]] = []
-    i = 0
-    while i + 2 < len(parts):
-        img, c1, c2 = parts[i], parts[i + 1], parts[i + 2]
-        if not img.is_cert and c1.is_cert1 and c2.is_cert2:
-            out.append((img, c1, c2))
-            i += 3
-        else:
-            i += 1
+    for i, name in enumerate(expected):
+        img, c1, c2 = parts[3 * i : 3 * i + 3]
+        if (img.name != name or img.is_cert
+                or c1.name != "cert1" or c1.img_type != IMG_TYPE_CERT1
+                or c2.name != "cert2" or c2.img_type != IMG_TYPE_CERT2):
+            raise ValueError(f"invalid signed triple for {name}")
+        out.append((img, c1, c2))
     return out
 
 
@@ -168,6 +186,8 @@ def signed_triples(parts: list[PartHdr]) -> list[tuple[PartHdr, PartHdr, PartHdr
 # --------------------------------------------------------------------------- #
 
 def _read_tag(buf: bytes, off: int) -> tuple[int, int, bool, int, int]:
+    if off >= len(buf):
+        raise ValueError("truncated DER tag")
     first = buf[off]
     cls = (first & 0xC0) >> 6
     constructed = bool(first & 0x20)
@@ -176,6 +196,8 @@ def _read_tag(buf: bytes, off: int) -> tuple[int, int, bool, int, int]:
     if tagnum == 0x1F:
         tagnum = 0
         while True:
+            if i >= len(buf):
+                raise ValueError("truncated DER tag")
             b = buf[i]
             tagnum = (tagnum << 7) | (b & 0x7F)
             i += 1
@@ -185,10 +207,14 @@ def _read_tag(buf: bytes, off: int) -> tuple[int, int, bool, int, int]:
 
 
 def _read_length(buf: bytes, off: int) -> tuple[int, int]:
+    if off >= len(buf):
+        raise ValueError("truncated DER length")
     first = buf[off]
     if first < 0x80:
         return first, 1
     count = first & 0x7F
+    if not count or off + 1 + count > len(buf):
+        raise ValueError("invalid DER length")
     return int.from_bytes(buf[off + 1 : off + 1 + count], "big"), 1 + count
 
 
@@ -304,7 +330,7 @@ def _bitstring(data: bytes, node: DerNode) -> bytes:
     if node.tag != 0x03:
         raise ValueError("expected BIT STRING")
     body = data[node.value_off : node.end]
-    if body[0] != 0:
+    if not body or body[0] != 0:
         raise ValueError("unsupported non-zero unused bits")
     return body[1:]
 
@@ -370,6 +396,9 @@ def apply_cert_bypass(data: bytes, targets: set[str]) -> bytes:
     """Prepend CERT2 hash overrides for every target sub-image. Returns new bytes."""
     parts = parse_parts(data)
     triples = signed_triples(parts)
+    missing = targets - {img.name for img, _c1, _c2 in triples}
+    if missing:
+        raise ValueError(f"unknown signing targets: {', '.join(sorted(missing))}")
     # map cert2 part -> its target image part, for images we are overriding
     override_cert2: dict[int, PartHdr] = {
         id(c2): img for img, _c1, c2 in triples if img.name in targets
@@ -618,9 +647,10 @@ def main(argv: list[str]) -> int:
         if args.cmd == "sign":
             targets = {s.strip() for s in args.partitions.split(",") if s.strip()}
             out = apply_cert_bypass(data, targets)
+            if not verify(out):
+                return 1
             Path(args.output).write_bytes(out)
             print(f"signed: {args.output} ({len(data)} -> {len(out)} bytes)")
-            verify(out)
             return 0
         else:
             return 0 if verify(data, args.name if not args.all else None) else 1

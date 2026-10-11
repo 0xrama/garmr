@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import struct
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -57,7 +58,7 @@ def lz4_decompress_win(src: bytes, max_out: int, win: bytes) -> bytes:
             out.append(win[gpos] if gpos < base else out[gpos - base])
     return bytes(out[:max_out])
 
-VENDOR = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Temp", "opencode", "vendor_20_5_14.img")
+VENDOR = os.path.join(tempfile.gettempdir(), "garmr", "vendor_20_5_14.img")
 STOCK_PATH = os.path.join(ROOT, "poc", "trustlet_patch", "stock_trustlet.tlbin")
 OUT = os.path.join(ROOT, "analysis", "trustlet_20_5_14.tlbin")
 
@@ -78,6 +79,8 @@ def ensure_vendor():
         glob.glob(os.path.join(ROOT, "firmware", "V1TDS35H.83-20-5-14", "super.img_sparsechunk.*")),
         key=lambda f: int(f.rsplit(".", 1)[-1]),
     )
+    if not files:
+        raise SystemExit("missing 20-5-14 super.img_sparsechunk.* inputs; see README.md")
     runs = build_map(files)
     parts, extents = lp_partitions(runs)
     target = next(p for p, _f, _n in parts if p.startswith("vendor") and not p.endswith("_b"))
@@ -222,11 +225,12 @@ def main() -> int:
             chunk = lz4_decompress_win(img.rd(pblk * BLK, plen), llen, win)
         print(f"extent {k}: lcn={lcn} la={la:#x} llen={llen} pblk={pblk:#x} cblks={cblks} -> {len(chunk)} bytes")
         if len(chunk) < llen:
-            print(f"  !! short decompress ({len(chunk)}/{llen})")
+            raise SystemExit(f"short decompress ({len(chunk)}/{llen}); no trustlet output written")
         out += chunk[:llen]
 
     print(f"\ntotal extracted: {len(out)} / expected {size}")
-    if len(out) >= 4 and out[:4] == b"MCLF":
+    if (len(out) == size and out[:4] == b"MCLF"
+            and bytes.fromhex("0706000000000000000000000000004d") in out[:0x80]):
         print("MCLF magic: OK")
         data = bytes(out[:size])
         with open(OUT, "wb") as f:
@@ -241,7 +245,7 @@ def main() -> int:
         print(f"is_locked @0x19ec0 new: {data[0x19ec0:0x19ed8].hex(' ')}")
         print(f"is_locked @0x19ec0 old: {stock[0x19ec0:0x19ed8].hex(' ')}")
         return 0
-    print("MCLF magic MISSING — extraction wrong")
+    print("wrong size, MCLF magic or trustlet UUID — no output written")
     return 1
 
 

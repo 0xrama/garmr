@@ -5,13 +5,16 @@ actually checked, what booted, and which ideas turned out to be wrong.
 
 `Confirmed` means the pattern was found at the expected count, the replacement
 landed in the intended partition, and the resulting LK image parsed again.
-`Hardware-confirmed` means the patched image was also booted on the test phone.
+Hardware entries below are historical reports, not independently captured
+evidence. The audit found no supporting adb property logs, signed before/after
+attestation chains or Play Integrity response artifacts. Both LK artifacts
+reproduce offline exactly; no new hardware test is claimed.
 
 The current reference build is `V1TDS35H.83-20-5-12 RETIN` (Android 15). The
 same patch neighborhoods were checked on 20-5-5 and 20-5-7; the later images
 are mostly re-signed/re-versioned copies in the areas that matter here.
 
-## Hardware trial
+## Reported historical hardware trial
 
 | Build | sboot patch | Booted? | `verifiedbootstate` | Play Integrity |
 | --- | --- | --- | --- | --- |
@@ -43,8 +46,14 @@ this port. The image contains seven patches, is cert-bypass signed with the
 `OVERRIDE` mode, reparses cleanly, and keeps dm-verity working on the tested
 stock system image.
 
-Build it with `poc/build_full_20_5_12.py` and check it with
-`poc/verify_poc.py`.
+Build with `poc/build_native_20_5_12.py`; native14 uses shared native12
+operations with build-specific overrides. `build_full_20_5_12.py` is a
+deprecated compatibility entry. Check exact output with the stdlib
+`poc/verify_poc.py --build 20-5-12 STOCK ARTIFACT` (default 12; 14 supported).
+Builders verify before writing. Full parsing rejects truncation/trailing bytes;
+signed inventories are LK `(lk, bl2_ext, aee, lk_main_dtb)` and TEE `(atf, tee)`.
+Certificate checks prove internal consistency, not hardware authorization.
+Offline CI runs `python3 -m unittest discover -s tests -v`, not device tests.
 
 ## The seven patches in the image
 
@@ -213,9 +222,14 @@ The 20-5-14 vendor image moved to **EROFS with LZ4 compact indexes and a
 64 KB cross-cluster window** (`h_advise = COMPACTED_2B`,
 `feature_incompat = LZ4_0PADDING`), so the raw needle scans that worked for
 the 20-5-12 tree find nothing. The trustlet was carved with
-`analysis/extract_trustlet_14.py` + `analysis/erofs_compact.py` (a faithful
-port of the kernel `zmap.c` compact-index decoder plus a windowed LZ4 block
-decompressor; the old `analysis/erofs_reader.py` cannot read this layout).
+`analysis/extract_trustlet_14.py` / `analysis/erofs_compact.py`. Extraction
+cannot currently be replayed from supplied inputs: matching super sparsechunks
+are absent. The extraction entry now delegates to the build/inode-specific
+compact decoder instead of the incompatible old EROFS data reader. Missing
+inputs and short extraction results fail without writing a trustlet. Full
+extraction correctness has not been retested. Capstone is required for
+disassembly; older analysis uses liblk; signing uses cryptography and key
+generation uses OpenSSL.
 
 The result (`poc/trustlet_patch/stock_trustlet_20_5_14.tlbin`) is 263,555
 bytes — the same size as 20-5-12 — and 95% byte-identical. The differences
@@ -226,7 +240,7 @@ All three v2 patch sites are byte-identical:
 | Site | Offset | Status |
 | --- | --- | --- |
 | `is_locked()` | `0x19ec0` | unchanged |
-| bootloader-state path | `0x1cbbc` | unchanged |
+| boot-state selector (stack word) | `0x1cbbc` | unchanged |
 | device-locked path | `0x1cd5c` | unchanged |
 
 A 20-5-14 patched binary was generated the same way as v2
@@ -239,7 +253,8 @@ nothing here has been hardware-validated.
 
 The 20-5-14 `tee.img` passes the full CERT1/CERT2 verification
 (`analysis/check_tee_14.py`), and its Kinibi core is 99% byte-identical to
-20-5-12 — both MCLF verify gates are byte-identical at the same offsets. The
+20-5-12 — both cmd `0xad` status consumers are byte-identical at the same offsets.
+Signature-specific semantics and dispatcher provenance remain unresolved. The
 two-gate bypass is built for both builds:
 
 ```text

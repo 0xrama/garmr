@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-Patch Kinibi's MCLF trustlet signature-verification gates so a modified
-trustlet is accepted, then re-sign tee.img with the CERT2 cert bypass.
+Experimental patch of two Kinibi loader status consumers after command 0xad,
+then apply the CERT2 hash override. Signature-specific semantics and modified
+trustlet acceptance are NOT established.
 
-UPGRADED (see analysis/annotate_loader.py for the disassembly evidence):
-the loader checks the cmd-0xad verdict at TWO sites, and both must be
-forced to the success path:
+The two observed consumers (see analysis/annotate_loader.py) are:
 
     gate 1  kinibi 0x5ebf0:  cbz w0, #0x5ecc4  ->  b #0x5ecc4
             bytes           a0 06 00 34        ->  35 00 00 14
@@ -62,6 +61,8 @@ def main() -> int:
     args = p.parse_args()
 
     raw = args.tee_img.read_bytes()
+    if not mtk_cert.verify(raw):
+        return 1
     parts = mtk_cert.parse_parts(raw)
     tee = next((x for x in parts if x.name == "tee"), None)
     if tee is None:
@@ -96,17 +97,16 @@ def main() -> int:
         print(f"{label}: {anchor[-4:].hex()} -> {patch.hex()} @ tee.img 0x{cbz_abs:x} (anchor unique)")
 
     signed = mtk_cert.apply_cert_bypass(bytes(img), {"tee"})
-    args.output.write_bytes(signed)
-
-    print(f"\nwrote {args.output} ({len(raw)} -> {len(signed)} bytes)")
-    print("--- verification ---")
+    print("--- certificate/hash consistency ---")
     ok = mtk_cert.verify(signed)
-    print(f"\n{'OK' if ok else 'FAIL'}")
-    print("\nNOTE: high-confidence static patch (both 0xad verdict gates in the "
-          "MCLF loader; disassembly evidence in analysis/annotate_loader.py), "
-          "but still hardware-unvalidated. Flash only on a sacrificial device "
-          "with a recovery path.")
-    return 0 if ok else 1
+    if not ok:
+        return 1
+    args.output.write_bytes(signed)
+    print(f"\nwrote {args.output} ({len(raw)} -> {len(signed)} bytes)")
+    print("\nOFFLINE VERIFIED experiment only: no proof of trustlet acceptance, "
+          "execution, or Strong Integrity. Hardware validation requires a "
+          "sacrificial device and a tested recovery path.")
+    return 0
 
 
 if __name__ == "__main__":

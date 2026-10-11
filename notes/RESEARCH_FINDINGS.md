@@ -1,11 +1,16 @@
-# Garmr research notes: what the cancunf trial proved
+# Garmr research notes: reported cancunf trials and offline evidence
 
 This is the investigation log for the Motorola Moto G54/G64 5G, codename
 `cancunf`. Garmr is inspired by fenrir and uses the same general idea: patch the
 MediaTek LK container so an unlocked device will execute modified boot-chain
 components.
 
-The useful result is narrower than the original hope:
+Hardware outcomes below are historical reports. No supporting captured boot
+properties, signed before/after certificate chains or Play Integrity responses
+were identified in the audit; repeated narratives are not independent evidence.
+Offline reconstruction matches both LK artifacts. No new hardware test is claimed.
+
+The reported result is narrower than the original hope:
 
 - The LK bypass works.
 - The patched phone boots and reports a green/locked state to Android.
@@ -39,7 +44,7 @@ Inside the stock `lk.img` used here:
 | `lk` | `0x000200` | Fastboot, boot logic, and state reporting |
 | `bl2_ext` | `0x130790` | EL3 verification and security policy |
 | `aee` | `0x1ee300` | AEE dump handler |
-| `lk_main_dtb` | `0x2ece90` | Device tree |
+| `lk_main_dtb` | `0x2ed090` | Device tree data (header at `0x2ece90`) |
 
 Each sub-partition has a `0x200`-byte GFH header. Ghidra was loaded with the
 raw image at address zero, so file offsets and Ghidra addresses line up.
@@ -141,8 +146,9 @@ The KeyMint logic is in a dynamically loaded vendor trustlet:
 
 Disassembly of that trustlet found the `is_locked()` function at offset
 `0x19ec0`. It reads one global and returns whether it is nonzero. The current
-three-site patch forces that return value to one and also forces the two related
-attestation fields to the locked/green values.
+three-site patch forces that return value to one and changes two related
+state selectors. Their mapping into signed standard fields is not validated;
+standard RootOfTrust has one `deviceLocked` member, not two.
 
 The patch is in `poc/cancunf-km-trustlet-patch-v2.zip`. It is an experiment,
 not a hardware result. Kinibi may reject the modified MCLF trustlet before
@@ -175,11 +181,11 @@ Useful strings in the LK partition include:
 | --- | ---: |
 | `sec_query_device_lock` | `0xf4816` |
 | `sec_get_seccfg` | `0x119e33` |
-| `Preflash validation failed` | `0xd053f` |
+| `Preflash validation failed` | `0xd073f` |
 | `k6855v1_64_cancun` | `0xcc595` |
-| `androidboot.verifiedbootstate=orange` | `0x103d65` |
+| `androidboot.verifiedbootstate=orange` | `0x103f59` |
 
-## 7. Hardware log
+## 7. Reported historical hardware outcomes (not captured logs)
 
 | Build | Result |
 | --- | --- |
@@ -195,7 +201,7 @@ working image leaves the stock sboot value alone.
 
 1. Test the KeyMint trustlet module on the exact firmware build.
 2. If Kinibi checks MCLF signatures, locate and bypass that check in `tee.img`.
-3. Verify the trustlet's second device-locked input and the reported
+3. Trace the second lock-related selector into certificate serialization and verify
    `verifiedBootKey`/vbmeta digest on a real attestation certificate.
 4. Keep payload-stage work separate. No cancunf payload has been built here.
 

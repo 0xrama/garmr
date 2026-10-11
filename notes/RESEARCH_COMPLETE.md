@@ -1,89 +1,81 @@
-# Garmr: complete attack-surface map and test plan
+# Garmr: provisional attack-surface map and test plan
 
-This consolidates everything established across the LK, TEE (Kinibi), trustlet,
-and preloader analysis. It is the reference for the "sit and try all options"
-session.
+This is an offline research map, not a complete proof of the secure-world
+implementation or an attestation solution. Historical LK trials report booting,
+green/locked Android properties and BASIC integrity. Captured boot logs, signed
+before/after certificates and Play Integrity responses supporting those trials
+were not identified in the audited checkout. No new hardware tests are claimed.
 
-## 1. Boot chain (cancunf, MT6855)
+## 1. Boot chain and image layout
 
-```
+```text
 BootROM -> preloader (BL2) -> ATF (BL31, EL3) -> Kinibi TEE (EL1)
         -> GenieZone (EL2) -> LK -> Linux
 ```
 
-- `preloader.img` loads ATF + TEE; it holds the Kinibi memory-map / MMU tables
-  (references `0x08000000` base and `0x08540000` BSS page).
-- `tee.img` = `atf` (245368 B @ data 0x200, runtime 0x48200000) + `tee`
-  (Kinibi core 562176 B @ data 0x3d150, runtime base 0x08000000).
-- Kinibi image format: `"EET KTM"` header (0x240 B) = magic + sizes + a
-  256-byte RSA-2048 self-signature + load base `0x08000000`.
+For 20-5-12, `tee.img` contains signed `atf` (245368 bytes, data `0x200`,
+runtime `0x48200000`) and `tee` (562176 bytes, data `0x3d150`, Kinibi base
+`0x08000000`). The Kinibi header is `0x240` bytes with `EET KTM` magic;
+its signature/key interpretations need further validation.
 
-## 2. What each layer controls
+## 2. Evidence by layer
 
-| Layer | Controls | Garmr status |
+| Layer | Offline evidence | Boundary |
 | --- | --- | --- |
-| LK (normal world) | cmdline: `verifiedbootstate`, `vbmeta.device_state`, `flash.locked`, AVB flags | ✅ 7 patches, hardware-proven → Android reports green/locked |
-| CERT2 cert bypass | accepts modified `lk.img`/`tee.img` | ✅ `poc/mtk_cert.py`, byte-identical to fenrir OVERRIDE |
-| Kinibi (TEE) | trustlet loading + MCLF signature verification | ⚠️ mapped, key is efuse-backed |
-| KeyMint trustlet | composes RootOfTrust / attestation | ⚠️ patch exists, unvalidated |
+| LK | Seven patch types, eleven placements, 82 changed payload bytes per build; both artifacts reproduced exactly | Historical boot reports, not independently captured here |
+| CERT2 overrides | Internal CERT1/CERT2 signatures and hashes pass on stock and modified LK/TEE | Embedded keys do not establish hardware authorization |
+| Kinibi loader | Two anchored consumers after cmd `0xad` patched in both builds | Signature-specific semantics/acceptance unknown |
+| KeyMint trustlet | Three sites change 16 bytes per build, final 256-byte signature unchanged | Execution and signed certificate effects unknown |
 
-## 3. Attestation inputs (trustlet `07060000...004d.tlbin`)
+Canonical build/verification commands and dependency requirements are in
+[README](../README.md). Parsing rejects truncation/trailing bytes and full
+verification requires LK inventory `(lk, bl2_ext, aee, lk_main_dtb)` or TEE
+inventory `(atf, tee)`. This is not a boot-safety guarantee.
 
-| Field | Trustlet source | Controllable? |
-| --- | --- | --- |
-| `bootState` (green) | HAL reads `ro.boot.verifiedbootstate` | ✅ LK patch |
-| `deviceLocked` #1 | `is_locked()` @ `0x19ec0` → global `0x73008` | ❌ TEE-internal (set via trustlet cmd `0xa`, from secure storage) |
-| `deviceLocked` #2 | TCI byte @ `0x1cd5c` (HAL-supplied) | ✅ patch Android KeyMint HAL |
+## 3. Candidate attestation inputs
 
-So two of three are normal-world winnable; `is_locked()` is the TEE-side wall.
-The v2 trustlet patch (`poc/cancunf-km-trustlet-patch-v2.zip`) forces all three.
+`is_locked()` at trustlet `0x19ec0` reads global `0x73008`. Analysis detects
+reset and storage-load writers (`0x19c9c`, `0x19fa4`), but upstream producers
+and update paths remain untraced. The described `umulh` with magic
+`0xE38E38E38E38E38F` followed by `lsr #5` implements unsigned division by
+36, not 9; a Capstone rerun confirmed this local instruction sequence.
 
-## 4. Trustlet MCLF signature
+Selectors at `0x1cc44` and `0x1cd5c` use the global and a stack byte
+respectively. A stack load does not prove HAL/TCI provenance. LK/property to
+trustlet boot-state propagation is a working hypothesis without the matching
+HAL/serializer trace and signed certificate evidence. Standard RootOfTrust has
+one `deviceLocked` field, not two; multiple string selectors are not proof of
+multiple standard fields. See [data-flow notes](ATTESTATION_CHANNEL.md).
 
-- MCLF v2.5: header `0x80` + text `0x3fac8` + data `0x8b0` + sig block.
-- Sig block = `[132-byte blob][03 00 00 00][01 00 01][256-byte RSA-2048 sig]`,
-  signature = last 256 bytes @ `0x40483`.
-- **Verification key is NOT the in-flash RSA key** (kinibi `0x88000` = tee.img
-  `0xc5150`): `sig^e mod n` is random under PKCS#1 v1.5/PSS over all regions.
-  The real key is efuse/hardware, used via MTK crypto SMC. **Self-sign is dead.**
+## 4. Key and handler unknowns
 
-## 5. Kinibi MCLF verification surface
+The stock trailer has a 132-byte unknown blob, `03 00 00 00`, `01 00 01`
+and final 256-byte candidate RSA signature at `0x40483`. The candidate modulus
+at Kinibi `0x88000` yields encoded-message prefix `2d33`, suffix `20`,
+inconsistent with conventional PKCS#1 v1.5/PSS under that interpretation.
+It does not locate the real key, exclude all in-flash keys or prove efuses.
+Self-sign failure cannot resolve key provenance or validate the chosen format.
 
-- Parser `0x5c738` (magic `0x464C434D`), loader `0x5eac4..0x5ef98`.
-- Driver dispatch: wrappers (`0x65b60` cmd `0xad`, `0x65c88` cmd `0xac`,
-  `0x65ae0` cmd `0x32`, `0x65cc8` cmd `0xa9`, ...) do
-  `ldr wN,[0x54000+0x8c]; blr xN` → a single runtime-initialized handler.
-- **`[0x54000+0x8c]` (runtime `0x0854008c`) is never written by Kinibi code**
-  (exhaustive adrp/str/stp/movz scan = zero writes). It is initialized during
-  the preloader→Kinibi handoff via Kinibi's early-boot PIC copy at
-  `0x2b94..0x2bbc` (source data passed in by the preloader). The handler's
-  address is therefore not statically resolvable from the images alone.
-- The handler's signature-failure return was therefore **not pinned to 100%**.
+Wrappers call through `[0x54000+0x8c]`; initializer and handler remain unresolved.
+ATF handoff, preloader PIC-copy and runtime registration are theories, not facts.
+Linear register-tracking sweeps are heuristic, not exhaustive proofs of no
+writer. See [key evidence](KINIBI_MCLF_KEY.md).
 
-## 6. Bypass candidates (test order)
+## 5. Experiments and required evidence
 
-1. **`0x5ebf0` (recommended first)**: loader's `cbz w0,#0x5ecc4` after the
-   cmd `0xad` call → patch to `b #0x5ecc4`
-   (`a0 06 00 34` → `35 00 00 14`) at tee.img `0x9bd40`. Medium confidence
-   (cmd `0xad` runs right after the MCLF intro read = most likely verify step).
-   → `python3 bypass/patch_verify.py ...`
-2. **Trustlet bind-mount only** (`poc/trustlet_patch` module) — tests whether
-   Kinibi rejects the modified MCLF (the #1 unknown).
-3. **Trustlet + tee.img bypass** — the full TEE-side experiment.
-4. **Self-sign** (`selfsign/`) — expected to FAIL (efuse key), kept as a
-   negative control to confirm the efuse finding.
+1. Build-matched LK baseline: collect image hashes, properties, complete signed
+   attestation chains and actual integrity responses; do not substitute narrative.
+2. Trustlet mount only: verify mounted bytes and logged restart requests for
+   discovered running services, then independently establish actual restarts
+   and whether a fresh secure-world session executed it.
+3. Trustlet plus experimental TEE consumers: both `0x5ebf0` and `0x5eca4`
+   are changed, not only the old first-site candidate. Additional authentication
+   and side effects may remain behind cmd `0xad`.
+4. Self-sign: exploratory alternative, not a negative control proving efuses.
 
-## 7. What a full win requires (unvalidated)
-
-```text
-unlock -> LK patches + cert bypass (done)
-       -> patched tee.img to make Kinibi accept the modified MCLF (candidate 1)
-       -> patched trustlet forcing is_locked()/deviceLocked#2 (exists)
-       -> trustlet signs genuine device key with locked/green claims
-       -> DEVICE, maybe STRONG
-```
-
-The one hard blocker that remains unproven is whether Kinibi's MCLF signature
-check can be neutralized (candidate 1) — the verification key is efuse-backed,
-so the only route is bypassing the *result check*, whose definitive branch is
-behind the preloader-initialized handler.
+Follow [testing guide](TESTING_GUIDE.md), one layer at a time with backups and
+a recovery path. Neither successful mounts nor locked/green certificate fields
+guarantee DEVICE/STRONG: chain trust, revocation, provisioning, freshness,
+security-patch requirements and verifier policy can still matter. No such
+result is demonstrated here. Missing super sparsechunks also prevent replaying
+vendor extraction from the supplied firmware inputs.

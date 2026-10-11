@@ -9,7 +9,7 @@ the MediaTek MT6855 / Dimensity 7025.
 - Codename: `cancunf`
 - CPU: ARM64, MT6855V/AZA
 - Bootloader: MTK LK v2 with `lk`, `bl2_ext`, `aee`, and `lk_main_dtb`
-- Tested firmware: `V1TDS35H.83-20-5-12 RETIN`, Android 15
+- Historically reported tested firmware: `V1TDS35H.83-20-5-12 RETIN`, Android 15
 - Earlier comparison images: 20-5-5 and 20-5-7
 - TEE: Trustonic Kinibi/MobiCore
 - Hypervisor: GenieZone at EL2
@@ -45,7 +45,10 @@ firmware.
 `poc/cancunf-fenrir-full-20-5-12.img` is the current seven-patch artifact. The
 filename comes from the fenrir tooling; the port itself is called Garmr.
 
-It boots with the stock system image and makes Android report:
+Historical trials report booting with the stock system and these properties;
+captured logs, signed before/after certificates and integrity responses were
+not found in the audited checkout. Offline artifacts reproduce exactly.
+The reported properties are:
 
 ```text
 verifiedbootstate=green
@@ -92,8 +95,10 @@ fields.
 
 ## Tools and useful files
 
-- `poc/build_full_20_5_12.py`: build the current LK image
-- `poc/verify_poc.py`: verify patch counts and replacements
+- `poc/build_native_20_5_12.py` / `build_native_20_5_14.py`: canonical builders
+- `poc/build_full_20_5_12.py`: deprecated compatibility entry for native12
+- `poc/verify_poc.py`: stdlib exact stock-to-artifact/cert verifier;
+  `--build {20-5-12,20-5-14}`, default 12
 - `analysis/find_patches.py`: reproduce the LK pattern search
 - `analysis/trace_lockstate.py`: follow LK seccfg references
 - `analysis/trace_atf_rot.py`: map the ATF root-of-trust mailbox
@@ -103,8 +108,11 @@ fields.
 - `notes/ATTESTATION_CHANNEL.md`: attestation data-flow investigation
 - `notes/TRUSTLET_PATCH.md`: trustlet patch details
 
-The parser is [liblk](https://github.com/R0rt1z2/liblk); the injector comes from
-[fenrir](https://github.com/R0rt1z2/fenrir). `mtkclient` is useful for reading
+Canonical builds and certificate verification are stdlib-only and verify before
+writing. Older analysis uses [liblk](https://github.com/R0rt1z2/liblk), disassembly
+requires Capstone; signing requires cryptography and key generation uses OpenSSL. Matching super
+sparsechunks needed for vendor extraction are absent from supplied inputs.
+`mtkclient` is useful for reading
 partitions and changing seccfg, but keep a complete backup and an EDL/DA
 recovery path before testing.
 

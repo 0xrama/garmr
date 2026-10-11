@@ -54,7 +54,7 @@ def hx(s: str) -> bytes:
 
 
 # (original, patched, {partition: expected_hit_count})
-# Keep in sync with poc/build_full_20_5_12.py.
+# Canonical definitions; native14 overrides only the three changed patterns.
 PATCHES = {
     "sec_get_vfy_policy": (
         hx("00 01 00 b4 fd 7b bf a9"),
@@ -105,19 +105,24 @@ def find_all(data: bytes, needle: bytes) -> list[int]:
         start = idx + 1
 
 
-def apply_patches(data: bytes) -> bytes:
+def apply_patches(data: bytes, patches: dict = PATCHES) -> bytes:
+    parts = cert.parse_parts(data)
+    triples = cert.signed_triples(parts)
+    required = {part for _orig, _patched, targets in patches.values() for part in targets}
+    if required - {img.name for img, _c1, _c2 in triples}:
+        raise ValueError("missing required patch partitions")
     out = bytearray(data)
-    for part in cert.parse_parts(data):
+    for part in parts:
         if part.is_cert:
             continue
-        for name, (orig, patched, expected_by_part) in PATCHES.items():
+        for name, (orig, patched, expected_by_part) in patches.items():
             if part.name not in expected_by_part:
                 continue
             region = out[part.data_off : part.data_off + part.dsize]
             hits = find_all(bytes(region), orig)
             expected = expected_by_part[part.name]
             if len(hits) != expected:
-                raise SystemExit(
+                raise ValueError(
                     f"{name}: {part.name} has {len(hits)} hits, expected {expected}"
                 )
             for h in hits:
@@ -126,26 +131,50 @@ def apply_patches(data: bytes) -> bytes:
     return bytes(out)
 
 
-def main() -> int:
-    if not os.path.exists(STOCK):
-        raise SystemExit(f"stock not found: {STOCK}")
+def verify_patches(stock: bytes, artifact: bytes, patches: dict = PATCHES) -> bool:
+    """Compare every payload against the exact stock-site replacements."""
+    expected = apply_patches(stock, patches)
+    wanted = cert.signed_triples(cert.parse_parts(expected))
+    actual = cert.signed_triples(cert.parse_parts(artifact))
+    if [p.name for p, _c1, _c2 in wanted] != [p.name for p, _c1, _c2 in actual]:
+        return False
+    ok = True
+    for (before, _c1, _c2), (after, _a1, _a2) in zip(wanted, actual):
+        good = (expected[before.off : before.data_off] == artifact[after.off : after.data_off]
+                and expected[before.data_off : before.end] == artifact[after.data_off : after.end])
+        print(f"  {before.name:<12} exact payload: {'OK' if good else 'FAIL'}")
+        ok &= good
+    return ok
 
-    print(f"stock   : {STOCK}")
-    print(f"output  : {OUT}")
-    print(f"patches : {len(PATCHES)}")
 
-    data = open(STOCK, "rb").read()
-    patched = apply_patches(data)
-    signed = cert.apply_cert_bypass(patched, CERT_TARGETS)
+def main(stock: str = STOCK, out: str = OUT, patches: dict = PATCHES) -> int:
+    print(f"stock   : {stock}")
+    print(f"output  : {out}")
+    print(f"patches : {len(patches)}")
 
-    with open(OUT, "wb") as fh:
-        fh.write(signed)
+    try:
+        with open(stock, "rb") as fh:
+            data = fh.read()
+        if not cert.verify(data):
+            return 1
+        patched = apply_patches(data, patches)
+        signed = cert.apply_cert_bypass(patched, CERT_TARGETS)
 
-    print(f"\nwrote {OUT} ({len(data)} -> {len(signed)} bytes)")
-    print("\n--- verification ---")
-    ok = cert.verify(signed)
-    print(f"\n{'OK' if ok else 'FAIL'} -> {OUT}")
-    return 0 if ok else 1
+        print("\n--- patch verification ---")
+        ok = verify_patches(data, signed, patches)
+        print("\n--- certificate/hash consistency ---")
+        ok &= cert.verify(signed)
+        if not ok:
+            return 1
+        with open(out, "wb") as fh:
+            fh.write(signed)
+    except (ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"\nwrote {out} ({len(data)} -> {len(signed)} bytes)")
+    print("OFFLINE VERIFIED — not a boot test or a Strong Integrity result")
+    return 0
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 # Play Integrity on an unlocked cancunf
 
-The short version: Garmr fixes the bootloader-facing state, but the seven-patch
-LK image still reports BASIC only. If the immediate goal is a daily driver with
+The short version: historical reports say Garmr changes bootloader-facing
+properties but reaches BASIC only. Supporting captured hardware artifacts were
+not found in the audit; no new hardware result or DEVICE/STRONG solution is
+claimed here. If the immediate goal is a daily driver with
 banking and Play Integrity-dependent apps, the software route is less risky.
 
 ## Track A: TrickyStore and a keybox
@@ -25,8 +27,8 @@ There are real drawbacks:
 - this is not a permanent firmware fix;
 - the result depends on the module stack and the exact device state.
 
-Still, it has no LK-flashing or firmware-build-matching risk and is the sensible
-first option for a phone that needs to work this week.
+It avoids LK flashing, but compatibility and verifier policy still matter;
+no module/keybox combination here is verified to guarantee an integrity verdict.
 
 ## Track B: Garmr and the genuine key
 

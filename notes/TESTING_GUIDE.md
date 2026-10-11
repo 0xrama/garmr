@@ -8,6 +8,13 @@ device you own, tied to one firmware build, with a real brick risk.
 **Prereq:** bootloader already unlocked (`seccfg` unlocked). Garmr is *not* an
 unlock bypass.
 
+The examples below use 20-5-12. Separate 20-5-14 artifacts exist; substitute
+all LK/TEE inputs/outputs consistently. The module ZIP is 12-only and refuses
+14; the separate 14 trustlet binary is not a supported module package.
+No TEE/trustlet hardware result or DEVICE/STRONG solution is
+established. LK success is a historical report without captured supporting
+logs/certificates/integrity responses in the audited tree.
+
 ---
 
 ## 0. Before you start
@@ -39,12 +46,12 @@ cd /path/to/garmr
 python3 poc/build_native_20_5_12.py
 # -> poc/cancunf-native-full-20-5-12.img
 
-# (b) tee.img with the MCLF-verify bypass (best-guess @ tee.img 0x9bd40)
+# (b) experimental two-consumer bypass (Kinibi 0x5ebf0 and 0x5eca4)
 python3 bypass/patch_verify.py \
     --tee-img firmware/V1TDS35H.83-20-5-12/tee.img \
     -o bypass/tee_bypassed.img
 
-# (c) self-signed tee.img + trustlet (negative control)
+# (c) candidate self-signed tee.img + trustlet (exploratory, not an efuse test)
 python3 selfsign/keygen.py --out selfsign
 python3 selfsign/patch_tee_key.py \
     --modulus selfsign/modulus.bin \
@@ -56,13 +63,29 @@ python3 selfsign/sign_trustlet.py \
     -o selfsign/trustlet_selfsigned.tlbin
 ```
 
-Sanity check every image **before** flashing — it must print `Result: VALID`:
+Python 3 stdlib suffices for native builders/verification; self-signing requires
+`cryptography`, key generation uses OpenSSL, disassembly requires Capstone, older analysis may need
+liblk. Vendor extraction cannot be rerun without matching super sparsechunks,
+absent from the supplied firmware directories.
+
+Check every image **before** flashing:
 
 ```bash
 python3 poc/mtk_cert.py verify poc/cancunf-native-full-20-5-12.img --all
 python3 poc/mtk_cert.py verify bypass/tee_bypassed.img --all
 python3 poc/mtk_cert.py verify selfsign/tee_selfsigned.img --all
+python3 poc/verify_poc.py --build 20-5-12 \
+    firmware/V1TDS35H.83-20-5-12/lk.img \
+    poc/cancunf-native-full-20-5-12.img
+python3 -m unittest discover -s tests -v
 ```
+
+Full parsing rejects truncation/trailing bytes; verification requires all four
+LK signed components or both TEE components. `VALID` establishes internal
+signature/hash consistency with embedded keys, not device authorization or
+boot safety. Exact stock-to-artifact verification is stdlib-only; its build
+selector defaults to 20-5-12 and also accepts 20-5-14. Builders verify before
+writing. Passing offline CI/tests is not a hardware test.
 
 ---
 
@@ -86,15 +109,15 @@ adb shell getprop ro.boot.verifiedbootstate   # and vbmeta digest if present
 ```
 
 Play Integrity (any checker app / `playintegrity` API): expect **BASIC**, not
-DEVICE/STRONG. This is the proven baseline — if it does not boot or does not
+DEVICE/STRONG. This is the historically reported baseline — if it does not boot or does not
 report green/locked, stop and re-check the build.
 
 ---
 
 ## 3. Option B — trustlet bind-mount only (answers the #1 unknown)
 
-Keep stock `tee.img`. Only install the trustlet patch module. This tells us
-whether **Kinibi rejects the modified MCLF** (the single biggest unknown).
+Keep stock `tee.img`. Only install the trustlet patch module. This probes
+acceptance, but a mount or service restart alone does not establish execution.
 
 1. Copy `poc/cancunf-km-trustlet-patch-v2.zip` to the phone.
 2. Install as a Magisk/KernelSU module.
@@ -107,11 +130,15 @@ adb logcat -d | grep -iE 'trustonic|keymaster|kmta|mobicore|mcRegistry' | tail -
 adb shell su -c 'ls -la /vendor/app/mcRegistry /vendor/tee /vendor/firmware 2>/dev/null'
 ```
 
-- If KeyMint starts and attestation still says `unlocked` → the trustlet patch
-  itself is wrong or the bind mount is not taking effect.
-- If KeyMint **fails to start** / loader logs a signature rejection → **Kinibi
-  verifies the MCLF**, and we proceed to Option C.
-- If attestation now reports `locked` → done (unlikely, but then stop here).
+- Verify matching firmware, mounted file hashes and installed `module.log`.
+  Logs record restart requests for discovered services, not proof of restarts.
+  Independently check actual restarts and fresh secure-world session evidence.
+- If KeyMint starts but attestation stays unlocked, possible causes include an
+  old cached session, wrong file/path, patch semantics or another state source.
+- KeyMint startup failure alone does not prove signature enforcement. Preserve
+  explicit loader rejection evidence and distinguish it from mount/service errors.
+- If a fresh signed certificate changes to locked, preserve the complete chain
+  and parsed fields; this is not by itself a DEVICE/STRONG result.
 
 ---
 
@@ -136,19 +163,21 @@ Then dump a full attestation certificate (Key Attestation / `keymint` tester or
 
 - `deviceLocked` (want `true`)
 - `verifiedBootState` (want `VERIFIED`)
-- `verifiedBootKey` + `vbmetaDigest` (STRONG needs these to be sane)
+- `verifiedBootKey` + `vbmetaDigest` (compare against build-matched baseline)
 - `bootState` (want `GREEN`)
 
-Play Integrity: expect **DEVICE or STRONG** if the bypass + trustlet patch both
-hold. If it stays BASIC, one of the two assumptions is wrong — report back the
-attestation fields and the mobicore log.
+Record the actual Play Integrity response; **no DEVICE/STRONG verdict is
+promised or expected from these patches alone**. Even locked/green signed
+fields do not establish chain trust, provisioning, revocation status, freshness,
+security-patch requirements or verifier policy. BASIC does not uniquely diagnose
+either patch. Preserve image hashes, full certificates and loader/session logs.
 
 ---
 
-## 5. Option D — self-sign (negative control)
+## 5. Option D — self-sign (exploratory candidate)
 
-Expected to **fail** — this confirms the efuse-key finding rather than trusting
-it on paper.
+Acceptance is unknown. Failure cannot confirm efuse provenance: wrong metadata,
+signed region, algorithm, key selection or other enforcement can explain it.
 
 ```bash
 fastboot flash tee selfsign/tee_selfsigned.img
@@ -157,9 +186,9 @@ fastboot flash tee selfsign/tee_selfsigned.img
 fastboot reboot
 ```
 
-**Check:** KeyMint should either fail to start (signature/key rejection) or
-still report `unlocked`. A **failure here is the expected, correct result** —
-it validates that the verification key is not in flash.
+**Check:** collect startup, loader and fresh-session evidence and a full signed
+certificate if available. Do not interpret rejection or unchanged state as
+proof that a verification key is absent from flash.
 
 ---
 
@@ -184,7 +213,7 @@ If fastboot is unreachable, use the EDL/DA recovery path you prepared in step 0.
 | A (LK only) | | green | ? | BASIC (expected) | |
 | B (trustlet only) | | | | | did mobicore reject MCLF? |
 | C (trustlet + tee bypass) | | | | | |
-| D (self-sign) | | | | | expected FAIL |
+| D (self-sign) | | | | | candidate scheme; key provenance unresolved |
 
 ---
 
@@ -192,9 +221,9 @@ If fastboot is unreachable, use the EDL/DA recovery path you prepared in step 0.
 
 - **One change at a time.** Don't flash LK + TEE + trustlet together on the
   first try; you won't know which one broke boot.
-- **Match the firmware build.** Every offset in this repo is for
-  `V1TDS35H.83-20-5-12`. A different build needs a fresh `find_patches.py` run
-  and fresh offsets.
+- **Match the firmware build.** This guide uses 20-5-12 examples; 20-5-14 has
+  separately re-pinned patterns and matching artifacts. Other builds need
+  fresh analysis, not merely a pattern match.
 - **A green Android property is not a green attestation.** Only the attestation
   certificate + Play Integrity verdict count.
 - **Log everything.** `logcat`, the full attestation cert, and which image you

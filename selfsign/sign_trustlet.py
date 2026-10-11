@@ -2,10 +2,9 @@
 """
 Re-sign an MCLF v2.5 trustlet with an RSA-2048 private key.
 
-WARNING: this produces a CORRECT-FORMAT signature block, but the cancunf
-device's actual trustlet verification key appears to be efuse/hardware-backed
-(see notes in selfsign/README.md and the self-sign investigation). Use this
-only once the correct signing key is known, or for format research.
+WARNING: this implements a candidate signing scheme, NOT a stock-validated
+MCLF signature format. The actual verification key, authenticated region and
+purpose of the 132-byte trailer blob are unknown. See selfsign/README.md.
 
 Default scheme: SHA-256 + PKCS#1 v1.5 over region [0, 0x403f8) (header + text +
 data). Override with flags if the real scheme differs.
@@ -18,13 +17,11 @@ Usage:
 """
 
 import argparse
-import hashlib
 import struct
-import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 MCLF_MAGIC = b"MCLF"
 V25_HEADER_SIZE = 0x80
@@ -40,16 +37,6 @@ def load_private_key(path: Path):
     return serialization.load_pem_private_key(path.read_bytes(), password=None)
 
 
-def sign_v15(key, data: bytes, sha: int) -> bytes:
-    h = hashes.SHA256() if sha == 256 else hashes.SHA384()
-    return key.sign(data, padding.PKCS1v15(), h)
-
-
-def sign_pss(key, data: bytes, sha: int, salt_len: int) -> bytes:
-    h = hashes.SHA256() if sha == 256 else hashes.SHA384()
-    return key.sign(data, padding.PSS(mgf=padding.MGF1(h), salt_length=salt_len), h)
-
-
 def main() -> int:
     p = argparse.ArgumentParser(description="Re-sign an MCLF v2.5 trustlet (RSA-2048)")
     p.add_argument("--key", required=True, type=Path)
@@ -63,11 +50,12 @@ def main() -> int:
     args = p.parse_args()
 
     tl = bytearray(args.trustlet.read_bytes())
+    if len(tl) != SEGMENTS_END + 395:
+        raise SystemExit("unexpected trustlet size; this signing hypothesis is build-specific")
     if tl[:4] != MCLF_MAGIC:
         raise SystemExit("not an MCLF trustlet (bad magic)")
 
     # Verify the segment layout matches what we expect for this build
-    text_start = struct.unpack_from("<I", tl, 0x30)[0]
     text_len = struct.unpack_from("<I", tl, 0x34)[0]
     data_len = struct.unpack_from("<I", tl, 0x3C)[0]
     if text_len != TEXT_LEN or data_len != DATA_LEN:
@@ -75,16 +63,19 @@ def main() -> int:
             f"unexpected segment sizes (text={text_len:#x}, data={data_len:#x}); "
             "this signer is build-specific"
         )
-    if len(tl) < SEGMENTS_END + 256:
-        raise SystemExit("trustlet too short")
-
     signed = bytes(tl[:SEGMENTS_END])
     key = load_private_key(args.key)
+    if not isinstance(key, rsa.RSAPrivateKey) or key.key_size != 2048 or key.public_key().public_numbers().e != 65537:
+        raise SystemExit("candidate trailer requires RSA-2048 with exponent 65537")
     sha = int(args.sha)
 
-    sig = sign_pss(key, signed, sha, args.salt_len) if args.pss else sign_v15(key, signed, sha)
+    digest = hashes.SHA256() if sha == 256 else hashes.SHA384()
+    scheme = (padding.PSS(mgf=padding.MGF1(digest), salt_length=args.salt_len)
+              if args.pss else padding.PKCS1v15())
+    sig = key.sign(signed, scheme, digest)
     if len(sig) != 256:
         raise SystemExit(f"expected 256-byte RSA-2048 signature, got {len(sig)}")
+    key.public_key().verify(sig, signed, scheme, digest)
 
     blob = bytes(132) if args.zero_blob else bytes(tl[SEGMENTS_END : SEGMENTS_END + 132])
 
@@ -98,7 +89,8 @@ def main() -> int:
     print(f"wrote {args.output} ({len(tl)} -> {len(out)} bytes)")
     print(f"signed region: [0x00000, 0x{SEGMENTS_END:x}) ({SEGMENTS_END} bytes)")
     print(f"scheme: {'RSA-PSS' if args.pss else 'PKCS#1 v1.5'} SHA-{sha}")
-    print("NOTE: device verification key is likely efuse-backed; this output is format-correct only.")
+    print("Candidate signature round-trip verified with the supplied key; "
+          "actual MCLF format, key provenance and device acceptance remain unknown.")
     return 0
 
 

@@ -5,8 +5,8 @@ platform: the Moto G54 5G and Moto G64 5G (MediaTek MT6855 / Dimensity 7025).
 
 I built this to answer a narrow question: does cancunf's MTK LK container have
 the same EL3 verification-policy weakness used by fenrir? Yes. The current LK
-artifact boots on tested hardware and makes Android report a locked, green boot
-state. It does **not**, by itself, make hardware attestation report a locked
+artifact reportedly booted in historical trials and made Android report a locked,
+green boot state. It does **not**, by itself, make hardware attestation report a locked
 bootloader.
 
 This is a research tree, not a one-click unlock tool. The phone must already be
@@ -14,7 +14,7 @@ bootloader-unlocked, and every patch is tied to a firmware build.
 
 ## Current result
 
-Tested against stock firmware `V1TDS35H.83-20-5-12 RETIN` (Android 15):
+Historical reports for `V1TDS35H.83-20-5-12 RETIN` (Android 15):
 
 - `poc/cancunf-fenrir-full-20-5-12.img` boots with stock system images.
 - Android reports `verifiedbootstate=green`,
@@ -28,32 +28,37 @@ site was hardened, three patterns were re-pinned, and
 `poc/cancunf-native-full-20-5-14.img` builds and verifies cleanly but has
 not been flashed. Details in [`notes/STATUS.md`](notes/STATUS.md).
 
-The name `full` is historical. It contains seven patches; the dangerous
+These hardware reports are not independently reproduced by this checkout:
+no captured boot-property logs, signed before/after attestation chains or
+Play Integrity responses supporting them were identified in the audit.
+Offline reconstruction matches both checked-in LK artifacts exactly.
+
+The name `full` is historical. It contains seven patch types (eleven placements,
+82 changed payload bytes per build); the dangerous
 `sboot` patch is deliberately absent. The output filenames retain `fenrir`
-because Garmr uses the fenrir injector and liblk tooling.
+as provenance of the original artifact, not a current dependency.
 
 ### Patch status
 
 | Patch | Result |
 | --- | --- |
-| `sec_get_vfy_policy` | Hardware-confirmed EL3 chain bypass in `bl2_ext`, `lk`, and `aee` |
+| `sec_get_vfy_policy` | Byte-verified in `bl2_ext`, `lk`, and `aee`; historical boot success reported |
 | `spoof_lock_state` | Present, but the seccfg reader it targets is dead code for attestation |
-| `force_green_state` | Hardware-confirmed |
+| `force_green_state` | Byte-verified; historical green properties reported |
 | `avb_allow_verification_error` | Included and byte-verified |
 | `bypass_security_control` | Included; skips the fastboot lock/security gate |
 | `preflash_validation_bypass` | Included; skips the preflash failure branch |
-| `vbmeta_device_state_locked` | Hardware-confirmed |
+| `vbmeta_device_state_locked` | Byte-verified; historical locked properties reported |
 | `spoof_sboot_state` | Removed: stock sboot is already enabled, and the replacement breaks boot |
 
 The exact bytes, offsets, and Ghidra evidence are in [`notes/STATUS.md`](notes/STATUS.md).
 
 ## Why Strong Integrity is a separate problem
 
-On cancunf, LK's seccfg lock-state code writes a shadow global, but the only
-reader has no callers. The TEE does not get its attestation state from that LK
-path; the Trustonic KeyMint trustlet composes the RootOfTrust separately.
-That is why spoofing LK properties works for Android's boot-state reporting but
-hardware attestation still says the bootloader is unlocked.
+The identified LK seccfg reader has no detected callers. Static searches found
+no forwarding path to the TEE, not an exhaustive proof that none exists.
+Trustlet state selectors provide a separate research target; their HAL inputs
+and mapping into the signed RootOfTrust serializer remain to be traced.
 
 A three-patch KeyMint trustlet module is included as an unvalidated research
 artifact:
@@ -62,9 +67,10 @@ artifact:
 poc/cancunf-km-trustlet-patch-v2.zip
 ```
 
-It targets the exact trustlet from this firmware and forces the relevant
-locked/green fields. It is intended for a rooted Magisk/KernelSU environment,
-and its bind mount may be rejected if Kinibi verifies the trustlet signature.
+It targets the 20-5-12 trustlet and changes three candidate state selectors;
+their mapping into signed standard attestation fields remains unvalidated.
+It is intended for a rooted Magisk/KernelSU environment,
+and Kinibi may reject the modified binary even if the bind mount succeeds.
 Do not treat it as tested just because the binary patch is present. See
 [`notes/TRUSTLET_PATCH.md`](notes/TRUSTLET_PATCH.md).
 
@@ -74,18 +80,10 @@ keybox. That route needs root and has keybox-rotation/revocation costs; see
 
 ## Build and verify
 
-The builder uses [liblk](https://github.com/R0rt1z2/liblk) and the
-[fenrir injector](https://github.com/R0rt1z2/fenrir/tree/main/injector):
-
-```bash
-LIBLK_PATH=/path/to/liblk \
-FENRIR_INJECTOR_PATH=/path/to/fenrir/injector \
-python3 poc/build_full_20_5_12.py
-```
-
-A fenrir-free, liblk-free build path is also available. It applies the same
-seven patches and signs with the native CERT2 hash-override cert bypass, and
-produces a byte-identical image to the fenrir path:
+The canonical builders require Python 3's standard library only. They apply
+the seven patch types and native CERT2 hash overrides, verifying the complete
+result before writing it. Native12 owns shared patch operations; native14
+supplies build-specific pattern overrides.
 
 ```bash
 python3 poc/build_native_20_5_12.py
@@ -110,17 +108,40 @@ firmware/V1TDS35H.83-20-5-12/lk.img
 ```
 
 Override it with `CANCUNF_STOCK` and the output with `CANCUNF_OUT` if needed.
-The builder checks hit counts, removes every original pattern, reapplies the
-cert-bypass override, and reparses the resulting image.
+The deprecated `poc/build_full_20_5_12.py` entry delegates to native12.
+The unsafe legacy `devices/cancunf.py` entry is removed; do not use old copies.
+Parsing rejects truncation and trailing bytes; full signed inventories are
+LK = `lk`, `bl2_ext`, `aee`, `lk_main_dtb`, and TEE = `atf`, `tee`.
+Certificate verification establishes internal consistency using keys embedded
+in the image, not hardware authorization, boot safety or trustlet acceptance.
 
 To verify an existing artifact against its stock input:
 
 ```bash
-PYTHONPATH=/path/to/liblk \
 python3 poc/verify_poc.py \
+  --build 20-5-12 \
   firmware/V1TDS35H.83-20-5-12/lk.img \
   poc/cancunf-fenrir-full-20-5-12.img
 ```
+
+`verify_poc.py` is the stdlib canonical stock-to-artifact verifier: it checks
+the exact expected artifact and certificates, not merely pattern counts.
+`--build` accepts `20-5-12` (default) and `20-5-14`; use matching stock/artifact
+paths for 14. Run offline regression tests with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+CI runs offline tests, not hardware tests. Analysis helpers are separate:
+`find_patches.py` requires liblk; disassembly helpers require Capstone;
+self-signing requires cryptography, and key generation uses OpenSSL. Install these in your
+Python environment only if using those paths. Vendor extraction requires the
+matching firmware super sparsechunks, which are absent from the supplied
+firmware directories. The old EROFS reader does not support the 14 compact
+layout; `extract_trustlet_14.py` now delegates to the build/inode-specific
+`erofs_compact.py` decoder. Missing inputs prevent an end-to-end extraction
+retest; do not mistake input validation for proven extraction correctness.
 
 To rerun the byte-level analysis:
 
@@ -134,12 +155,12 @@ python3 analysis/find_patches.py
 
 ```text
 firmware/                 Stock LK, TEE, and related firmware components
-poc/build_full_20_5_12.py Canonical seven-patch builder
-poc/build_native_20_5_12.py Fenrir-free seven-patch builder (native cert bypass)
+poc/build_full_20_5_12.py Deprecated compatibility entry for native12
+poc/build_native_20_5_12.py Canonical seven-patch builder (native cert bypass)
 poc/build_native_20_5_14.py Seven-patch builder for the 20-5-14 build (re-pinned)
 poc/mtk_cert.py          MTK CERT2 hash-override cert bypass + verifier
-poc/verify_poc.py         Per-partition patch verification
-poc/cancunf-fenrir-full-20-5-12.img Latest hardware-validated LK artifact
+poc/verify_poc.py         Exact stock-to-artifact and certificate verification
+poc/cancunf-fenrir-full-20-5-12.img Historically reported booting LK artifact
 poc/cancunf-native-full-20-5-14.img Newer-build artifact (not hardware-validated)
 poc/cancunf-km-trustlet-patch-v2.zip Root-module trustlet patch package
 poc/trustlet_patch/       Trustlet binaries and Magisk module scripts
@@ -148,18 +169,14 @@ analysis/check_fw.py      Stock-firmware survey for the whole patch set
 analysis/diff_sites.py   Old-vs-new LK byte diff and relaxed pattern hunts
 analysis/repin_20_5_14.py / confirm_repin.py  Capstone re-pinning evidence
 analysis/find_trustlet.py  Sparse-aware super scan for the KeyMint trustlet
-devices/cancunf.py        Initial drop-in fenrir device entry
 notes/STATUS.md           Current patch and hardware-trial status
 notes/CERT_BYPASS.md      CERT2 cert-bypass mechanism and equivalence to fenrir
-notes/KINIBI_MCLF_KEY.md  Kinibi trustlet verification key location (flash vs efuse)
-notes/RESEARCH_COMPLETE.md  Full attack-surface map and test plan
+notes/KINIBI_MCLF_KEY.md  Candidate key evidence and unresolved provenance
+notes/RESEARCH_COMPLETE.md  Provisional attack-surface map and test plan
 notes/TESTING_GUIDE.md      Hardware test procedure (review before flashing)
 notes/ATTESTATION_CHANNEL.md  TEE/KeyMint data-flow investigation
 notes/TRUSTLET_PATCH.md   Trustlet patch point and remaining risks
 ```
-
-`devices/cancunf.py` is the original framework entry and still contains the
-old sboot stage. Use `poc/build_full_20_5_12.py` for the current artifact.
 
 ## Hardware warnings
 

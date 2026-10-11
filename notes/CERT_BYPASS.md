@@ -56,7 +56,7 @@ val-protocol's `tools/sign_mtk_cert.py --legacy` additionally wraps the original
 ## Usage
 
 ```bash
-# sign a patched container (overrides lk, bl2_ext, aee by default)
+# override lk/bl2_ext/aee hashes; verify all four signed components including DTB
 python3 poc/mtk_cert.py sign patched_lk.img -o signed_lk.img
 
 # verify signatures + hashes across every signed sub-image
@@ -72,6 +72,13 @@ python3 poc/build_native_20_5_12.py
 - `verify` reports `VALID` on `poc/cancunf-fenrir-full-20-5-12.img`.
 - `poc/build_native_20_5_12.py` output is byte-identical to
   `poc/cancunf-fenrir-full-20-5-12.img` (`cmp` clean).
+
+Full parsing rejects truncation and trailing bytes, and full verification
+requires signed LK inventory `(lk, bl2_ext, aee, lk_main_dtb)` or TEE `(atf, tee)`.
+Verification uses keys embedded in the image: it establishes internal consistency,
+not a device-provisioned trust anchor or hardware authorization. Canonical
+native12/native14 builders verify before writing; `verify_poc.py` checks the
+exact stock-to-artifact result with a build selector (12 default, 14 supported).
 
 This is still an offline cert/hash result. A clean cert bypass is not a boot
 test; flash only a matching firmware build on a sacrificial device with a

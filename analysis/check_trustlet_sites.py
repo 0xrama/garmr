@@ -3,7 +3,7 @@ import os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 stock = open(os.path.join(ROOT, "poc", "trustlet_patch", "stock_trustlet.tlbin"), "rb").read()
 patched = open(os.path.join(ROOT, "poc", "trustlet_patch", "0706000000000000000000000000004d.tlbin"), "rb").read()
-new = open(os.path.join(ROOT, "analysis", "trustlet_20_5_14.tlbin"), "rb").read()
+new = open(os.path.join(ROOT, "poc", "trustlet_patch", "stock_trustlet_20_5_14.tlbin"), "rb").read()
 
 print(f"stock={len(stock)} patched={len(patched)} new={len(new)}")
 assert len(stock) == len(patched)

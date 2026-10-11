@@ -1,6 +1,6 @@
 id=km_islocked_patch
-name=Cancunf KM Trustlet Patch (3-patch)
-version=v2.0
-versionCode=2
+name=Cancunf KM Trustlet Experiment (20-5-12 ONLY)
+version=v2.1
+versionCode=3
 author=cancunf-exploit
-description=Patches Trustonic KeyMint trustlet: (1) is_locked→1 for att_id_state=locked, (2) vb_state→0 for verifiedBootState=green, (3) bootloader_state→1 for deviceLocked=true. Target: V1TDS35H.83-20-5-12 cancunf.
+description=Unvalidated three-selector research patch. Requires exact 20-5-12 vendor fingerprint and trustlet hashes. Logs mounts/restart requests to module.log; does NOT establish TEE execution, attestation changes or Strong Integrity.

@@ -4,14 +4,16 @@ This investigation started with a simple question: why does Garmr make Android
 say “green” and “locked” while Play Integrity still says the bootloader is
 unlocked?
 
-The answer is that cancunf does not use the LK lock-state path that fenrir uses
-on some other devices. The LK patch controls normal-world boot reporting. The
-KeyMint trustlet has its own state inputs.
+The working explanation is that the identified LK lock-state wrapper is not
+the relevant attestation source. LK controls normal-world reporting; the
+KeyMint trustlet has separate observed selectors. Historical hardware outcomes
+are reported, not independently captured here; full HAL/serializer provenance
+and signed before/after certificates remain missing.
 
 ## Short version
 
-- `lk` and `bl2_ext` contain seccfg readers, but their lock-state result is not
-  forwarded to the TEE.
+- `lk` and `bl2_ext` contain seccfg readers, but no forwarding path from the
+  identified lock-state result to the TEE was found.
 - `tee.img` contains ATF and Kinibi, not the actual KeyMint attestation logic.
 - The RootOfTrust fields are composed by a vendor Trustonic trustlet.
 - That trustlet was found at:
@@ -33,9 +35,9 @@ In the `lk` partition, `sec_get_seccfg` (`FUN_000c2cec`) reads the 64-byte
 word. Ghidra finds no callers for it. A sweep for function pointers and dispatch
 tables found no indirect reference either.
 
-`bl2_ext` has the same shape: it writes its own shadow state and never reads the
-lock word in a live path. The SMC calls in LK are power/RTC calls; none is a
-lock-state service.
+`bl2_ext` has a similar shadow state with no live reader identified. The
+mapped LK SMC calls are power/RTC calls, not an identified lock-state service.
+Static searches do not exclude all indirect/runtime paths.
 
 That makes the original `spoof_lock_state` patch a byte-valid patch to dead code
 for this particular attestation question. It is not the source of the
@@ -78,11 +80,9 @@ analysis/dump_fns.py
 
 ## 3. The trustlet patch point
 
-> **Updated (offline re-analysis, Oct 2026):** the source of `is_locked()`'s
-> global is now pinned. It is **not** the TCI and **not** the ATF ROT
-> mailbox — see the "Where the lock byte really comes from" section below.
-> The practical consequence: no LK-side spoof can reach it, and the trustlet
-> patch is the correct (and necessary) layer.
+> **Offline re-analysis, Oct 2026:** a storage-load path into `is_locked()`'s
+> global was identified. This does not trace upstream producers or exclude
+> mailbox influence on persisted state. See the storage section below.
 
 The vendor trustlet is a 263 KB ARM64 MCLF binary. At offset `0x19ec0` it has:
 
@@ -94,8 +94,8 @@ cset w0, ne
 ret
 ```
 
-This is `is_locked()`. On the unlocked phone the global is zero, so the
-function returns false and the attestation path selects `open`/`unlocked`.
+This is the function called `is_locked()` here. A zero global returns false
+and selects `open`; the actual runtime value needs captured evidence.
 
 The trustlet also contains these strings:
 
@@ -106,20 +106,22 @@ yellow    bootState 1
 green     bootState 0
 locked    is_locked() == 1
 open      is_locked() == 0
-unlocked  second deviceLocked check == 0
+unlocked  stack-byte selector == 0 (standard field mapping unresolved)
 ```
 
-The green boot-state value already comes from the Garmr LK patch. The HAL reads
-`ro.boot.verifiedbootstate=green` and supplies bootState zero to the trustlet.
+LK reports green through the boot properties. HAL propagation of that property
+as trustlet bootState zero is a hypothesis requiring a matching HAL trace.
 
-There are two device-locked checks in the attestation routine:
+There are two candidate lock-related selectors in the apparent attestation routine:
 
 1. At `0x1cc44`, a call to `is_locked()` selects `locked` or `open`.
-2. At `0x1cd5c`, a byte from the HAL-supplied TCI selects `locked` or
-   `unlocked`.
+2. At `0x1cd5c`, a stack byte selects `locked` or `unlocked`; HAL/TCI origin
+   is not established by that load alone.
 
-The first one was the confirmed blocker. The current trustlet package forces
-both paths to the locked value and forces the related boot-state field green.
+Standard RootOfTrust has one `deviceLocked` member. These string selectors
+must be traced into serialization before assigning standard field semantics.
+The current package changes three candidate state-selection sites; effects
+on signed certificates and integrity verdicts are not established.
 Details and exact bytes are in [`TRUSTLET_PATCH.md`](TRUSTLET_PATCH.md).
 
 ## 4. What this means for Garmr
@@ -169,39 +171,41 @@ su -c 'ls -la /vendor/app/mcRegistry /vendor/tee /vendor/firmware 2>/dev/null'
 logcat -d | grep -i -E 'trustonic|keymaster|kmta|mobicore'
 ```
 
-## 6. Where the lock byte really comes from (Oct 2026)
+## 6. Observed storage-load path (Oct 2026)
 
 `analysis/trace_rot_input.py` / `trace_rot_input2.py` sweep the whole
 trustlet for accesses to the `0x73000` page. `[0x73000+8]` — the
-`is_locked()` global — has exactly two writers:
+`is_locked()` global — has two detected writers in these heuristic sweeps:
 
 1. **Reset** (`0x19c9c`): `str wzr` — a clear-state path that also closes the
    cached session at `[0x72000+0xff8]`.
 2. **Load** (`0x19fa4`, inside the function at `0x19ed8`):
    opens a storage session (`bl 0x13200`), **reads a 4-byte value through
    the storage API (`bl 0x1d980`)** into `[sp+0x40]`, caches the session,
-   then stores `(u64)value / 9` (magic `0xE38E38E38E38E38F`, `umulh`+`lsr #5`)
-   into `[0x73000+8]`.
+   then stores a decoded value into `[0x73000+8]`. The described magic
+   `0xE38E38E38E38E38F`, `umulh` + `lsr #5` implements unsigned division
+   by **36**, not 9 (inputs 9, 36, 72 yield 0, 1, 2). A Capstone rerun
+   confirmed the constant construction at `0x19f84..0x19f98`, followed by
+   `umulh x1,x1,x3` at `0x19f9c` and `lsr x1,x1,#5` at `0x19fa0`.
+   This establishes the local arithmetic, not the upstream value's meaning.
 
-So the bootloader-lock input to attestation is a **persisted trustlet
-storage value** (Kinibi secure storage, session-cached), decoded from an
-encoded integer. Consequences:
+This supports a persisted/session-cached storage input, not a complete causal
+trace of bootloader state. Producers and update paths remain unresolved:
 
-- The **ATF ROT-mailbox SMCs are not the source** — an LK-side spoof of the
-  `MTK_SIP_LK_ROOT_OF_TRUST` handoff cannot change attestation. That
-  shortcut is disproved; the three-site trustlet patch remains the layer to
-  patch.
+- No direct mailbox-to-global path was identified. Storage reads do not
+  exclude upstream influence via `MTK_SIP_LK_ROOT_OF_TRUST` or other paths.
 - The second device-locked selector at `0x1cd5c` reads `ldrb w0, [sp,#0x2c8]`
-  (HAL-supplied TCI byte), consistent with the original findings: one
-  secure-side gate (`is_locked`), one REE-fed gate.
+  (origin unresolved), alongside the global-fed `is_locked` selector.
 - Callers of the loader function: `0x1a0d0`, `0x1a19c`, `0x1a77c` (init /
   provisioning paths).
 
-For the 20-5-14 trustlet the same layout holds: the writer, the reset, the
+Linear sweeps and register tracking are heuristic, not exhaustive proofs of
+all writers or runtime data flow.
+
+For the 20-5-14 trustlet the same observed layout holds: the writer, the reset, the
 selection tree at `0x1cc00..0x1cd9c`, and the string table are byte-identical;
 the two rebuilt regions (`0x1a848..0x1bad5`, `0x33417..0x34c0e`) sit in bulk
 code away from every pinned site (`analysis/diff_trustlet_fns2.py`; the old
 region-A profile — 8 string-emitter calls, RoT-struct references, 2 storage
 opens — marks it as certificate-assembly code, and value *selection* happens
 in the unchanged region).
-

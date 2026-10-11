@@ -28,9 +28,9 @@ At trustlet offset `0x19ec0`:
 0x19ed0: ret
 ```
 
-The function reads one global u32 and returns whether it is nonzero. On the
-unlocked phone the value is zero, so this path selects `open` instead of
-`locked` in the attestation data.
+The function reads one global u32 and returns whether it is nonzero. A zero
+value selects `open`; a captured runtime value and signed certificate trace
+are still needed to establish actual device behavior.
 
 The replacement is eight bytes of ARM64:
 
@@ -39,19 +39,22 @@ C0 02 00 D0 00 08 40 B9
   -> 20 00 80 D2 C0 03 5F D6
 ```
 
-That changes the function to `mov w0,#1; ret`.
+That changes the function to `mov x0,#1; ret` (also sets w0 to 1).
 
-## The other two fields
+## The other two candidate selectors
 
 The trustlet has two related device-state checks:
 
 - `0x1cc44` calls `is_locked()` for the `locked`/`open` bootloader-state field.
-- `0x1cd5c` reads the HAL-supplied device-state byte for the `locked`/`unlocked`
-  field.
+- `0x1cd5c` reads a stack byte selecting `locked`/`unlocked`; HAL/TCI origin
+  remains a hypothesis, not a fact established by the load.
 
 The current v2 binary patches all three relevant sites: `is_locked()`, the
-bootloader-state path, and the second device-locked path. The green boot state
-comes from Garmr's LK patch through `ro.boot.verifiedbootstate=green`.
+boot-state stack word at `0x1cbbc` (`ldr w0,[sp,#0x2c4]` replaced by
+`mov w0,#0`), and the second lock-related selector. Standard
+RootOfTrust has one `deviceLocked` field; mapping these selectors into signed
+fields requires serializer tracing. LK reports `ro.boot.verifiedbootstate=green`,
+but matching HAL propagation to this trustlet remains unvalidated.
 
 The string table around trustlet offset `0x3b370` is useful when checking a
 future build:
@@ -68,21 +71,19 @@ future build:
 
 ## Artifacts
 
-The older single-site experiment is:
-
-```text
-poc/cancunf-km-islocked-patch.zip
-```
-
 The current three-site package is:
 
 ```text
 poc/cancunf-km-trustlet-patch-v2.zip
 ```
 
-It is packaged as a Magisk/KernelSU-style module. The scripts bind-mount the
-patched trustlet over the stock path before restarting the Trustonic and
-KeyMint services.
+It is packaged as a Magisk/KernelSU-style module with the same patched 12
+binary and updated scripts. They validate matching firmware and mounted
+contents and log restart **requests** for discovered running init services to
+`module.log` in the installed module directory. A successful request is not
+proof of a restart or a fresh secure-world session loading/executing the file.
+The guard requires the vendor fingerprint to contain the exact build ID and
+the stock/patched trustlet SHA-256 to match; absent evidence causes refusal.
 
 ## What has not been proven
 
@@ -91,8 +92,9 @@ The module has not been validated on hardware. In particular:
 1. Kinibi may check the MCLF signature before loading the trustlet. If it does,
    the patched binary will be rejected and KeyMint may fail to start.
 2. The second device-state input needs to be confirmed from a full certificate.
-3. `verifiedBootKey` and the vbmeta digest still need to be checked against
-   the Strong Integrity requirements.
+3. Full chain trust, `verifiedBootKey`, vbmeta digest, provisioning, revocation,
+   freshness and verifier policy remain to be checked. Locked/green fields
+   alone cannot guarantee DEVICE/STRONG.
 4. The trustlet must match the firmware build. Do not reuse this binary on a
    different vendor image.
 
@@ -114,6 +116,7 @@ poc/trustlet_patch/0706000000000000000000000004d_20_5_14.tlbin             3-sit
 ```
 
 The v2 Magisk/KernelSU package itself is still built around the 20-5-12
-binary; for a 20-5-14 test, bind-mount the `_20_5_14` binary instead of the
-packaged one (same target path, `/vendor/app/mcRegistry/0706...4d.tlbin`).
-All caveats above still apply unchanged.
+binary and now deliberately refuses 20-5-14. Simply replacing its binary will
+not pass the firmware/hash guards. The separate `_20_5_14` binary remains an
+offline research artifact, not a supported module package.
+All hardware/attestation caveats above still apply unchanged.
